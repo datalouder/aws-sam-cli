@@ -175,8 +175,9 @@ class DefaultBuildStrategy(BuildStrategy):
                     # for zip function we need to copy over the artifacts
                     # artifacts directory will be created by the builder
                     artifacts_dir = function.get_build_dir(self._build_dir)
-                    LOG.debug("Copying artifacts from %s to %s", single_build_dir, artifacts_dir)
-                    osutils.copytree(single_build_dir, artifacts_dir)
+                    LOG.debug("Symlink artifacts from %s to %s", single_build_dir, artifacts_dir)
+                    pathlib.Path(artifacts_dir).parent.mkdir(exist_ok=True)
+                    os.symlink(single_build_dir, artifacts_dir)
                     function_build_results[function.full_path] = artifacts_dir
         elif build_definition.packagetype == IMAGE:
             for function in build_definition.functions:
@@ -281,8 +282,9 @@ class CachedBuildStrategy(BuildStrategy):
             for function in build_definition.functions:
                 # artifacts directory will be created by the builder
                 artifacts_dir = function.get_build_dir(self._build_dir)
-                LOG.debug("Copying artifacts from %s to %s", cache_function_dir, artifacts_dir)
-                osutils.copytree(cache_function_dir, artifacts_dir)
+                LOG.debug("Symlink artifacts from %s to %s", cache_function_dir, artifacts_dir)
+                pathlib.Path(artifacts_dir).parent.mkdir(exist_ok=True)
+                os.symlink(cache_function_dir, artifacts_dir)
                 function_build_results[function.full_path] = artifacts_dir
 
         return function_build_results
