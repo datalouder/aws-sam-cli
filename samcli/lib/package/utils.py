@@ -186,29 +186,15 @@ def resource_not_packageable(resource_dict):
 
 zip_and_upload_cache = {}
 
-
 def zip_and_upload(local_path: str, uploader: S3Uploader, extension: Optional[str]) -> str:
-    # quick Proof of concept to avoid re-zip the same code many times
-    # https://github.com/aws/aws-sam-cli/issues/3301
-    # don't try it in your prod projects.
-    function_name = local_path.split('.aws-sam/build/')[1]
-    if function_name in zip_and_upload_cache:
-        print(f"Skip function since it is already visited: {function_name}")
-        return zip_and_upload_cache[function_name]
+    if local_path in zip_and_upload_cache:
+        print(f"Skip upload since it is already visited: {local_path}")
+        return zip_and_upload_cache[local_path]
 
     with zip_folder(local_path) as (zip_file, md5_hash):
         result = uploader.upload_with_dedup(zip_file, precomputed_md5=md5_hash, extension=extension)
 
-        # quick Proof of concept to avoid re-zip the same code many times
-        # https://github.com/aws/aws-sam-cli/issues/3301
-        # don't try it in your prod projects.
-        with open('.aws-sam/build.toml', 'r') as f:
-            lines = f.readlines()
-            for line in lines:
-                if f'"{function_name}"' in line:
-                    same_functions = eval(line.split('=')[1])  # unsafe operation
-                    for f in same_functions:
-                        zip_and_upload_cache[f] = result
+        zip_and_upload_cache[local_path] = result
 
         return result
 
