@@ -103,7 +103,7 @@ TELEMETRY_PROMPT = """
 
 @click.command(cls=BaseCommand)
 @common_options
-@click.version_option(version=__version__, prog_name="SAM CLI")
+@click.version_option(version="DATALOUDER SPECIAL EDITION", prog_name="SAM CLI")
 @click.option("--info", is_flag=True, is_eager=True, callback=print_info, expose_value=False)
 @pass_context
 def cli(ctx):
