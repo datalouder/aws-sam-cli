@@ -35,6 +35,8 @@ class TestDoCli(TestCase):
             (""),
             "container_env_var_file",
             (),
+            (),
+            hook_name=None,
         )
 
         BuildContextMock.assert_called_with(
@@ -55,10 +57,45 @@ class TestDoCli(TestCase):
             container_env_var={},
             container_env_var_file="container_env_var_file",
             build_images={},
+            excluded_resources=(),
             aws_region=ctx_mock.region,
+            hook_name=None,
         )
         ctx_mock.run.assert_called_with()
         self.assertEqual(ctx_mock.run.call_count, 1)
+
+    @patch("samcli.commands.build.command.is_experimental_enabled")
+    @patch("samcli.commands.build.build_context.BuildContext")
+    def test_build_exits_supplied_hook_name(self, BuildContextMock, is_experimental_enabled_mock):
+
+        ctx_mock = Mock()
+        BuildContextMock.return_value.__enter__.return_value = ctx_mock
+        is_experimental_enabled_mock.return_value = False
+
+        do_cli(
+            ctx_mock,
+            "function_identifier",
+            None,
+            "base_dir",
+            "build_dir",
+            "cache_dir",
+            "clean",
+            "use_container",
+            "cached",
+            "parallel",
+            "manifest_path",
+            "docker_network",
+            "skip_pull_image",
+            "parameter_overrides",
+            "mode",
+            (""),
+            "container_env_var_file",
+            (),
+            (),
+            hook_name="terraform",
+        )
+        self.assertEqual(ctx_mock.call_count, 0)
+        self.assertEqual(ctx_mock.run.call_count, 0)
 
 
 class TestGetModeValueFromEnvvar(TestCase):

@@ -2,12 +2,14 @@
 CLI command for "deploy" command
 """
 import logging
+import os
 
 import click
 
 from samcli.cli.cli_config_file import TomlProvider, configuration_option
 from samcli.cli.main import aws_creds_options, common_options, pass_context, print_cmdline_args
 from samcli.commands._utils.cdk_support_decorators import unsupported_command_cdk
+from samcli.commands._utils.click_mutex import ClickMutex
 from samcli.commands._utils.options import (
     capabilities_option,
     guided_deploy_stack_name,
@@ -42,6 +44,10 @@ SHORT_HELP = "Deploy an AWS SAM application."
 
 
 HELP_TEXT = """The sam deploy command creates a Cloudformation Stack and deploys your resources.
+
+\b
+Set SAM_CLI_POLL_DELAY Environment Variable with a value of seconds in your shell to configure 
+how often SAM CLI checks the Stack state, which is useful when seeing throttling from CloudFormation.
 
 \b
 e.g. sam deploy --template-file packaged.yaml --stack-name sam-app --capabilities CAPABILITY_IAM
@@ -102,9 +108,29 @@ LOG = logging.getLogger(__name__)
     required=False,
     is_flag=True,
     help="Preserves the state of previously provisioned resources when an operation fails.",
+    cls=ClickMutex,
+    incompatible_params=["on_failure"],
+)
+@click.option(
+    "--on-failure",
+    default="ROLLBACK",
+    type=click.Choice(["ROLLBACK", "DELETE", "DO_NOTHING"]),
+    required=False,
+    help="""
+    Provide an action to determine what will happen when a stack fails to create. Three actions are available:\n
+    - ROLLBACK: This will rollback a stack to a previous known good state.\n
+    - DELETE: The stack will rollback to a previous state if one exists, otherwise the stack will be deleted.\n
+    - DO_NOTHING: The stack will not rollback or delete, this is the same as disabling rollback.\n
+    Default behaviour is ROLLBACK.\n\n
+    
+    This option is mutually exclusive with --disable-rollback/--no-disable-rollback. You can provide
+    --on-failure or --disable-rollback/--no-disable-rollback but not both at the same time.
+    """,
+    cls=ClickMutex,
+    incompatible_params=["disable_rollback", "no_disable_rollback"],
 )
 @stack_name_option(callback=guided_deploy_stack_name)  # pylint: disable=E1120
-@s3_bucket_option(guided=True)  # pylint: disable=E1120
+@s3_bucket_option(disable_callback=True)  # pylint: disable=E1120
 @image_repository_option
 @image_repositories_option
 @force_upload_option
@@ -157,6 +183,7 @@ def cli(
     config_file,
     config_env,
     disable_rollback,
+    on_failure,
 ):
     """
     `sam deploy` command entry point
@@ -191,6 +218,7 @@ def cli(
         config_env,
         resolve_image_repos,
         disable_rollback,
+        on_failure,
     )  # pragma: no cover
 
 
@@ -223,6 +251,7 @@ def do_cli(
     config_env,
     resolve_image_repos,
     disable_rollback,
+    on_failure,
 ):
     """
     Implementation of the ``cli`` method
@@ -290,6 +319,15 @@ def do_cli(
         ) as package_context:
             package_context.run()
 
+        # 500ms of sleep time between stack checks and describe stack events.
+        DEFAULT_POLL_DELAY = 0.5
+        try:
+            poll_delay = float(os.getenv("SAM_CLI_POLL_DELAY", str(DEFAULT_POLL_DELAY)))
+        except ValueError:
+            poll_delay = DEFAULT_POLL_DELAY
+        if poll_delay <= 0:
+            poll_delay = DEFAULT_POLL_DELAY
+
         with DeployContext(
             template_file=output_template_file.name,
             stack_name=guided_context.guided_stack_name if guided else stack_name,
@@ -315,5 +353,7 @@ def do_cli(
             signing_profiles=guided_context.signing_profiles if guided else signing_profiles,
             use_changeset=True,
             disable_rollback=guided_context.disable_rollback if guided else disable_rollback,
+            poll_delay=poll_delay,
+            on_failure=on_failure,
         ) as deploy_context:
             deploy_context.run()

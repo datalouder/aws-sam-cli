@@ -4,11 +4,10 @@ Entry point for the CLI
 
 import logging
 import json
-import atexit
+
 import click
 
 from samcli import __version__
-from samcli.lib.telemetry.metric import send_installed_metric, emit_all_metrics
 from samcli.lib.utils.sam_logging import (
     LAMBDA_BULDERS_LOGGER_NAME,
     SamCliLogger,
@@ -61,7 +60,7 @@ def print_cmdline_args(func):
 
     Parameters
     ----------
-    func: function reference
+    func: Callable
         Actual function (command) which will be executed
 
     Returns
@@ -115,6 +114,9 @@ def cli(ctx):
     You can find more in-depth guide about the SAM specification here:
     https://github.com/awslabs/serverless-application-model.
     """
+    import atexit
+    from samcli.lib.telemetry.metric import send_installed_metric, emit_all_metrics
+
     gc = GlobalConfig()
     if gc.telemetry_enabled is None:
         enabled = True

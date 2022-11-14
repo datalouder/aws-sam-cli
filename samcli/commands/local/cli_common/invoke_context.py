@@ -9,13 +9,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, IO, cast, Tuple, Any, Type
 
+from samcli.commands.local.cli_common.user_exceptions import InvokeContextException, DebugContextException
 from samcli.lib.utils import osutils
 from samcli.lib.providers.provider import Stack, Function
 from samcli.lib.providers.sam_stack_provider import SamLocalStackProvider
 from samcli.lib.utils.async_utils import AsyncContext
 from samcli.lib.utils.stream_writer import StreamWriter
 from samcli.commands.exceptions import ContainersInitializationException
-from samcli.commands.local.cli_common.user_exceptions import InvokeContextException, DebugContextException
 from samcli.commands.local.lib.local_lambda import LocalLambdaRunner
 from samcli.commands.local.lib.debug_context import DebugContext
 from samcli.local.lambdafn.runtime import LambdaRuntime, WarmLambdaRuntime
@@ -26,6 +26,24 @@ from samcli.local.layers.layer_downloader import LayerDownloader
 from samcli.lib.providers.sam_function_provider import SamFunctionProvider, RefreshableSamFunctionProvider
 
 LOG = logging.getLogger(__name__)
+
+
+class DockerIsNotReachableException(InvokeContextException):
+    """
+    Docker is not installed or not running at the moment
+    """
+
+
+class InvalidEnvironmentVariablesFileException(InvokeContextException):
+    """
+    User provided an environment variables file which couldn't be read by SAM CLI
+    """
+
+
+class NoFunctionIdentifierProvidedException(InvokeContextException):
+    """
+    If template has more than one function defined and user didn't provide any function logical id
+    """
 
 
 class ContainersInitializationMode(Enum):
@@ -203,6 +221,11 @@ class InvokeContext:
             ContainersMode.COLD: [self._stacks],
         }
 
+        # don't resolve the code URI immediately if we passed in docker vol by passing True for use_raw_codeuri
+        # this way at the end the code URI will get resolved against the basedir option
+        if self._docker_volume_basedir:
+            _function_providers_args[self._containers_mode].append(True)
+
         self._function_provider = _function_providers_class[self._containers_mode](
             *_function_providers_args[self._containers_mode]
         )
@@ -239,7 +262,7 @@ class InvokeContext:
         )
 
         if not self._container_manager.is_docker_reachable:
-            raise InvokeContextException(
+            raise DockerIsNotReachableException(
                 "Running AWS SAM projects locally requires Docker. Have you got it installed and running?"
             )
 
@@ -320,7 +343,7 @@ class InvokeContext:
         all_function_full_paths = [f.full_path for f in all_functions]
 
         # There are more functions in the template, and function identifier is not provided, hence raise.
-        raise InvokeContextException(
+        raise NoFunctionIdentifierProvidedException(
             "You must provide a function logical ID when there are more than one functions in your template. "
             "Possible options in your template: {}".format(all_function_full_paths)
         )
@@ -427,7 +450,8 @@ class InvokeContext:
             )
             return stacks
         except (TemplateNotFoundException, TemplateFailedParsingException) as ex:
-            raise InvokeContextException(str(ex)) from ex
+            LOG.debug("Can't read stacks information, either template is not found or it is invalid", exc_info=ex)
+            raise ex
 
     @staticmethod
     def _get_env_vars_value(filename: Optional[str]) -> Optional[Dict]:
@@ -449,7 +473,7 @@ class InvokeContext:
                 return cast(Dict, json.load(fp))
 
         except Exception as ex:
-            raise InvokeContextException(
+            raise InvalidEnvironmentVariablesFileException(
                 "Could not read environment variables overrides from file {}: {}".format(filename, str(ex))
             ) from ex
 

@@ -1,3 +1,4 @@
+import os.path
 from unittest import TestCase
 from unittest.mock import patch, Mock
 from uuid import uuid4
@@ -538,8 +539,15 @@ class TestBuildGraph(TestCase):
             build_graph_path.write_text(TestBuildGraph.BUILD_GRAPH_CONTENTS)
 
             build_graph = BuildGraph(str(build_dir))
+
+            current_function_build_definitions = build_graph.get_function_build_definitions()
+            current_layer_build_definitions = build_graph.get_layer_build_definitions()
+
             build_graph.update_definition_hash()
+
             write_hash_mock.assert_called_with({"mock": "hash"}, {"mock": "hash"})
+            self.assertEqual(current_function_build_definitions, build_graph.get_function_build_definitions())
+            self.assertEqual(current_layer_build_definitions, build_graph.get_layer_build_definitions())
 
     def test_compare_hash_changes_should_succeed(self):
         with osutils.mkdir_temp() as temp_base_dir:
@@ -928,3 +936,26 @@ class TestBuildDefinition(TestCase):
         self.assertEqual(build_definition1, build_definition2)
         self.assertEqual(len(build_definitions), 1)
         self.assertEqual(len(build_definition1.functions), 2)
+
+    @parameterized.expand([(True,), (False,)])
+    @patch("samcli.lib.build.build_graph.is_experimental_enabled")
+    def test_build_folder_with_multiple_functions(self, build_improvements_22_enabled, patched_is_experimental):
+        patched_is_experimental.return_value = build_improvements_22_enabled
+        build_graph = BuildGraph("build/path")
+        build_definition = FunctionBuildDefinition(
+            "runtime", "codeuri", ZIP, ARM64, {}, "handler", "source_hash", "manifest_hash"
+        )
+        function1 = generate_function(runtime=TestBuildGraph.RUNTIME, codeuri=TestBuildGraph.CODEURI, handler="handler")
+        function2 = generate_function(runtime=TestBuildGraph.RUNTIME, codeuri=TestBuildGraph.CODEURI, handler="handler")
+        build_graph.put_function_build_definition(build_definition, function1)
+        build_graph.put_function_build_definition(build_definition, function2)
+
+        if not build_improvements_22_enabled:
+            self.assertEqual(
+                build_definition.get_build_dir("build_dir"), build_definition.functions[0].get_build_dir("build_dir")
+            )
+        else:
+            self.assertEqual(
+                build_definition.get_build_dir("build_dir"),
+                build_definition.functions[0].get_build_dir("build_dir") + "-Shared",
+            )

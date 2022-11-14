@@ -1,3 +1,5 @@
+%YAML 1.1
+---
 Resources:
   HttpApiFunction:
     Type: AWS::Serverless::Function
@@ -30,6 +32,14 @@ Resources:
           Type: HttpApi
           Properties:
             ApiId: !Ref MyApi
+        HelloAWSIAMAuth:
+          Type: HttpApi
+          Properties:
+            Path: /hello-aws-iam-auth
+            Method: get
+            ApiId: !Ref MyApi
+            Auth:
+              Authorizer: AWS_IAM
 
   MyAuthFn:
     Type: AWS::Serverless::Function
@@ -51,11 +61,12 @@ Resources:
             AuthorizerPayloadFormatVersion: 1.0
           MyOauth2Authorizer:
             AuthorizationScopes:
-              - scope
+            - scope
             IdentitySource: $request.header.Authorization
             JwtConfiguration:
               audience:
-                - audience1
-                - audience2
-              issuer: "https://www.example.com/v1/connect/oidc"
+              - audience1
+              - audience2
+              issuer: https://www.example.com/v1/connect/oidc
         DefaultAuthorizer: LambdaAuth
+        EnableIamAuthorizer: true

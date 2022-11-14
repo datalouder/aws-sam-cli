@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List, Optional, TYPE_CHECKING
 
 from samcli.lib.utils.colors import Colored
-from samcli.lib.providers.exceptions import MissingCodeUri, MissingLocalDefinition
+from samcli.lib.providers.exceptions import MissingCodeUri, MissingLocalDefinition, InvalidTemplateFile
 
 from samcli.lib.providers.provider import ResourceIdentifier, Stack, get_all_resource_ids
 from samcli.lib.utils.code_trigger_factory import CodeTriggerFactory
@@ -44,6 +44,7 @@ class WatchManager:
     _waiting_infra_sync: bool
     _color: Colored
     _auto_dependency_layer: bool
+    _skip_infra_syncs: bool
 
     def __init__(
         self,
@@ -52,6 +53,7 @@ class WatchManager:
         package_context: "PackageContext",
         deploy_context: "DeployContext",
         auto_dependency_layer: bool,
+        skip_infra_syncs: bool,
     ):
         """Manager for sync watch execution logic.
         This manager will observe template and its code resources.
@@ -74,6 +76,7 @@ class WatchManager:
         self._package_context = package_context
         self._deploy_context = deploy_context
         self._auto_dependency_layer = auto_dependency_layer
+        self._skip_infra_syncs = skip_infra_syncs
 
         self._sync_flow_factory = None
         self._sync_flow_executor = ContinuousSyncFlowExecutor()
@@ -89,6 +92,14 @@ class WatchManager:
         """Queue up an infra structure sync.
         A simple bool flag is suffice
         """
+        if self._skip_infra_syncs:
+            LOG.info(
+                self._color.yellow(
+                    "You have enabled the --code flag, which limits sam sync updates to code changes only. To do a "
+                    "complete infrastructure and code sync, remove the --code flag."
+                )
+            )
+            return
         self._waiting_infra_sync = True
 
     def _update_stacks(self) -> None:
@@ -113,17 +124,28 @@ class WatchManager:
             try:
                 trigger = self._trigger_factory.create_trigger(resource_id, self._on_code_change_wrapper(resource_id))
             except (MissingCodeUri, MissingLocalDefinition):
-                LOG.debug("CodeTrigger not created as CodeUri or DefinitionUri is missing for %s.", str(resource_id))
+                LOG.warning(
+                    self._color.yellow("CodeTrigger not created as CodeUri or DefinitionUri is missing for %s."),
+                    str(resource_id),
+                )
                 continue
 
             if not trigger:
                 continue
             self._observer.schedule_handlers(trigger.get_path_handlers())
 
-    def _add_template_trigger(self) -> None:
+    def _add_template_triggers(self) -> None:
         """Create TemplateTrigger and add its handlers to observer"""
-        template_trigger = TemplateTrigger(self._template, lambda _=None: self.queue_infra_sync())
-        self._observer.schedule_handlers(template_trigger.get_path_handlers())
+        stacks = SamLocalStackProvider.get_stacks(self._template)[0]
+        for stack in stacks:
+            template = stack.location
+            template_trigger = TemplateTrigger(template, stack.name, lambda _=None: self.queue_infra_sync())
+            try:
+                template_trigger.validate_template()
+            except InvalidTemplateFile:
+                LOG.warning(self._color.yellow("Template validation failed for %s in %s"), template, stack.name)
+
+            self._observer.schedule_handlers(template_trigger.get_path_handlers())
 
     def _execute_infra_context(self) -> None:
         """Execute infrastructure sync"""
@@ -155,6 +177,9 @@ class WatchManager:
         # This is a wrapper for gracefully handling Ctrl+C or other termination cases.
         try:
             self.queue_infra_sync()
+            if self._skip_infra_syncs:
+                self._start_sync()
+                LOG.info(self._color.green("Sync watch started."))
             self._start()
         except KeyboardInterrupt:
             LOG.info(self._color.cyan("Shutting down sync watch..."))
@@ -170,13 +195,24 @@ class WatchManager:
                 self._execute_infra_sync()
             time.sleep(1)
 
+    def _start_sync(self):
+        """
+        Update stacks and populate all triggers
+        """
+        self._observer.unschedule_all()
+        self._update_stacks()
+        self._add_template_triggers()
+        self._add_code_triggers()
+        self._start_code_sync()
+
     def _execute_infra_sync(self) -> None:
-        LOG.info(self._color.cyan("Queued infra sync. Wating for in progress code syncs to complete..."))
+        LOG.info(self._color.cyan("Queued infra sync. Waiting for in progress code syncs to complete..."))
         self._waiting_infra_sync = False
         self._stop_code_sync()
         try:
             LOG.info(self._color.cyan("Starting infra sync."))
             self._execute_infra_context()
+            LOG.info(self._color.green("Infra sync completed."))
         except Exception as e:
             LOG.error(
                 self._color.red("Failed to sync infra. Code sync is paused until template/stack is fixed."),
@@ -184,17 +220,11 @@ class WatchManager:
             )
             # Unschedule all triggers and only add back the template one as infra sync is incorrect.
             self._observer.unschedule_all()
-            self._add_template_trigger()
+            self._add_template_triggers()
         else:
-            # Update stacks and repopulate triggers
             # Trigger are not removed until infra sync is finished as there
             # can be code changes during infra sync.
-            self._observer.unschedule_all()
-            self._update_stacks()
-            self._add_template_trigger()
-            self._add_code_triggers()
-            self._start_code_sync()
-            LOG.info(self._color.green("Infra sync completed."))
+            self._start_sync()
 
     def _on_code_change_wrapper(self, resource_id: ResourceIdentifier) -> OnChangeCallback:
         """Wrapper method that generates a callback for code changes.

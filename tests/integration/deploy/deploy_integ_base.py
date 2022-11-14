@@ -1,9 +1,9 @@
-import os
 from unittest import TestCase
 from enum import Enum, auto
 
 import boto3
 from botocore.config import Config
+from tests.testing_utils import get_sam_command
 
 
 class ResourceType(Enum):
@@ -76,15 +76,8 @@ class DeployIntegBase(TestCase):
             elif resource_type == "AWS::S3::Bucket":
                 self.left_over_resources[ResourceType.S3_BUCKET].append(resource_physical_id)
 
-    def base_command(self):
-        command = "sam"
-        if os.getenv("SAM_CLI_DEV"):
-            command = "samdev"
-
-        return command
-
+    @staticmethod
     def get_deploy_command_list(
-        self,
         s3_bucket=None,
         image_repository=None,
         image_repositories=None,
@@ -111,9 +104,11 @@ class DeployIntegBase(TestCase):
         signing_profiles=None,
         resolve_image_repos=False,
         disable_rollback=False,
+        on_failure=None,
     ):
-        command_list = [self.base_command(), "deploy"]
+        command_list = [get_sam_command(), "deploy"]
 
+        # Cast all string parameters to preserve behaviour across platforms
         if guided:
             command_list = command_list + ["--guided"]
         if s3_bucket:
@@ -172,11 +167,14 @@ class DeployIntegBase(TestCase):
             command_list = command_list + ["--resolve-image-repos"]
         if disable_rollback:
             command_list = command_list + ["--disable-rollback"]
+        if on_failure:
+            command_list = command_list + ["--on-failure", str(on_failure)]
 
         return command_list
 
-    def get_minimal_build_command_list(self, template_file=None, build_dir=None):
-        command_list = [self.base_command(), "build"]
+    @staticmethod
+    def get_minimal_build_command_list(template_file=None, build_dir=None):
+        command_list = [get_sam_command(), "build"]
 
         if template_file:
             command_list = command_list + ["--template-file", str(template_file)]

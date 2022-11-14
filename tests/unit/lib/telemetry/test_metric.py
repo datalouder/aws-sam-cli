@@ -1,7 +1,5 @@
-import pathlib
 import platform
 import time
-import uuid
 
 from parameterized import parameterized
 
@@ -9,6 +7,11 @@ import samcli
 
 from unittest import TestCase
 from unittest.mock import patch, Mock, ANY, call
+
+from samcli.lib.hook.exceptions import InvalidHookPackageConfigException
+from samcli.lib.hook.hook_config import HookPackageConfig
+from samcli.lib.iac.plugins_interfaces import ProjectTypes
+from samcli.lib.telemetry.event import EventTracker
 
 import samcli.lib.telemetry.metric
 from samcli.lib.telemetry.cicd import CICDPlatform
@@ -20,6 +23,8 @@ from samcli.lib.telemetry.metric import (
     track_template_warnings,
     capture_parameter,
     Metric,
+    _get_project_details,
+    ProjectDetails,
 )
 from samcli.commands.exceptions import UserException
 
@@ -132,6 +137,7 @@ class TestTrackCommand(TestCase):
         GlobalConfigClassMock = Mock()
         self.telemetry_instance = TelemetryClassMock.return_value = Mock()
         self.gc_instance_mock = GlobalConfigClassMock.return_value = Mock()
+        EventTracker.clear_trackers()
 
         self.telemetry_class_patcher = patch("samcli.lib.telemetry.metric.Telemetry", TelemetryClassMock)
         self.gc_patcher = patch("samcli.lib.telemetry.metric.GlobalConfig", GlobalConfigClassMock)
@@ -181,6 +187,7 @@ class TestTrackCommand(TestCase):
             "debugFlagProvided": False,
             "region": "myregion",
             "commandName": "fakesam local invoke",
+            "metricSpecificAttributes": ANY,
             "duration": ANY,
             "exitReason": "success",
             "exitCode": 0,
@@ -209,7 +216,7 @@ class TestTrackCommand(TestCase):
     @patch("samcli.lib.telemetry.metric.Context")
     def test_must_record_function_duration(self, ContextMock):
         ContextMock.get_current_context.return_value = self.context_mock
-        sleep_duration = 1  # 1 second
+        sleep_duration = 0.001  # 1 ms
 
         def real_fn():
             time.sleep(sleep_duration)
@@ -308,8 +315,9 @@ class TestTrackCommand(TestCase):
         actual = track_command(real_fn)()
         self.assertEqual(actual, "some return value")
 
+    @patch("samcli.lib.telemetry.metric.get_hook_metadata", return_value=None)
     @patch("samcli.lib.telemetry.metric.Context")
-    def test_must_pass_all_arguments_to_wrapped_function(self, ContextMock):
+    def test_must_pass_all_arguments_to_wrapped_function(self, ContextMock, get_hook_metadata_mock):
         def real_fn(*args, **kwargs):
             # simply return the arguments to be able to examine & assert
             return args, kwargs
@@ -337,6 +345,41 @@ class TestTrackCommand(TestCase):
             [call(ANY)],
             "The command metrics be emitted when used as a decorator",
         )
+
+    @patch("samcli.lib.telemetry.event.EventTracker.send_events", return_value=None)
+    @patch("samcli.lib.telemetry.metric.Context")
+    def test_must_send_events(self, ContextMock, send_mock):
+        ContextMock.get_current_context.return_value = self.context_mock
+
+        def real_fn():
+            pass
+
+        track_command(real_fn)()
+
+        send_mock.assert_called()
+
+    @patch("samcli.lib.telemetry.metric._get_project_details")
+    @patch("samcli.lib.telemetry.event.EventTracker.send_events", return_value=None)
+    @patch("samcli.lib.telemetry.metric.Context")
+    def test_collects_project_details(self, ContextMock, send_mock, project_details_mock):
+        ContextMock.get_current_context.return_value = self.context_mock
+        project_details_mock.return_value = ProjectDetails(
+            project_type="Terraform", hook_package_version="1.0.0", hook_name="terraform"
+        )
+
+        def real_fn(**kwargs):
+            pass
+
+        track_command(real_fn)(hook_name="terraform")
+        args, _ = self.telemetry_instance.emit.call_args_list[0]
+        metric_data = args[0]._data
+        send_mock.assert_called()
+        self.assertIn("metricSpecificAttributes", metric_data)
+        metric_specific_attributes = metric_data.get("metricSpecificAttributes")
+        self.assertEqual(metric_specific_attributes.get("projectType"), "Terraform")
+        self.assertEqual(metric_specific_attributes.get("hookPackageId"), "terraform")
+        self.assertEqual(metric_specific_attributes.get("hookPackageVersion"), "1.0.0")
+        project_details_mock.assert_called_once_with("terraform", {})
 
 
 class TestParameterCapture(TestCase):
@@ -473,3 +516,58 @@ def _ignore_common_attributes(data):
             data[a] = ANY
 
     return data
+
+
+class TestGetProjectDetails(TestCase):
+    @parameterized.expand(
+        [
+            (
+                True,
+                ProjectDetails(hook_name=None, hook_package_version=None, project_type=ProjectTypes.CDK.value),
+            ),
+            (
+                False,
+                ProjectDetails(hook_name=None, hook_package_version=None, project_type=ProjectTypes.CFN.value),
+            ),
+        ]
+    )
+    @patch("samcli.lib.telemetry.metric.is_cdk_project")
+    def test_cfn_cdk_project_types(self, project_type_cdk, expected, cdk_project_mock):
+        cdk_project_mock.return_value = project_type_cdk
+        result = _get_project_details("", {})
+        self.assertEqual(result, expected)
+
+    @patch("samcli.lib.telemetry.metric.HookPackageConfig")
+    @patch("samcli.lib.telemetry.metric.is_cdk_project")
+    def test_terraform_project(self, cdk_project_mock, mock_hook_package_config):
+        cdk_project_mock.return_value = False
+        hook_package = Mock()
+        hook_package.name = "terraform"
+        hook_package.version = "1.0.0"
+        hook_package.iac_framework = "Terraform"
+        mock_hook_package_config.return_value = hook_package
+        expected = ProjectDetails(hook_name="terraform", hook_package_version="1.0.0", project_type="Terraform")
+        result = _get_project_details("terraform", {})
+        self.assertEqual(result, expected)
+
+    @patch("samcli.lib.telemetry.metric.HookPackageConfig")
+    @patch("samcli.lib.telemetry.metric.get_hook_metadata")
+    def test_terraform_project_from_metadata(self, get_hook_metadata_mock, mock_hook_package_config):
+        get_hook_metadata_mock.return_value = {"HookName": "terraform"}
+        hook_package = Mock()
+        hook_package.name = "terraform"
+        hook_package.version = "1.0.0"
+        hook_package.iac_framework = "Terraform"
+        mock_hook_package_config.return_value = hook_package
+        expected = ProjectDetails(hook_name="terraform", hook_package_version="1.0.0", project_type="Terraform")
+        result = _get_project_details("", {})
+        self.assertEqual(result, expected)
+
+    @patch("samcli.lib.telemetry.metric.HookPackageConfig")
+    @patch("samcli.lib.telemetry.metric.is_cdk_project")
+    def test_invalid_hook_id(self, cdk_project_mock, mock_hook_package_config):
+        cdk_project_mock.return_value = False
+        mock_hook_package_config.side_effect = InvalidHookPackageConfigException(message="Something went wrong")
+        expected = ProjectDetails(hook_name="pulumi", hook_package_version=None, project_type="pulumi")
+        result = _get_project_details("pulumi", {})
+        self.assertEqual(result, expected)
