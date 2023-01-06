@@ -13,6 +13,11 @@ if [ "$python_version" = "" ]; then
     python_version="3.7.9";
 fi
 
+if [ "$CI_OVERRIDE" = "1" ]; then
+  build_folder="aws-sam-cli-beta"
+  build_binary_name="sam-beta"
+fi
+
 if ! [ "$build_binary_name" = "" ]; then
     echo "Building native installer with nightly/beta build"
     is_nightly="true"
@@ -69,7 +74,9 @@ if [ "$is_nightly" = "true" ]; then
 fi
 echo "samcli.spec content is:"
 cat installer/pyinstaller/samcli.spec
-../venv/bin/python -m PyInstaller -D --clean installer/pyinstaller/samcli.spec
+# --onedir/--onefile options not allowed when spec file provided for
+# updated pyinstaller version.
+../venv/bin/python -m PyInstaller --clean installer/pyinstaller/samcli.spec
 
 
 mkdir pyinstaller-output
