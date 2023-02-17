@@ -13,6 +13,12 @@ from unittest import mock
 from unittest.mock import patch, Mock, MagicMock
 
 from samcli.commands.package.exceptions import ExportFailedError
+from samcli.lib.package.permissions import (
+    WindowsFilePermissionPermissionMapper,
+    WindowsDirPermissionPermissionMapper,
+    AdditiveFilePermissionPermissionMapper,
+    AdditiveDirPermissionPermissionMapper,
+)
 from samcli.lib.package.s3_uploader import S3Uploader
 from samcli.lib.package.uploaders import Destination
 from samcli.lib.package.utils import zip_folder, make_zip, make_zip_with_lambda_permissions, make_zip_with_permissions
@@ -1492,7 +1498,7 @@ class TestArtifactExporter(unittest.TestCase):
             "Resources": {
                 "FunResource": {
                     "Type": "AWS::Serverless::Function",
-                    "Properties": {"Handler": "lambda.handler", "Runtime": "nodejs10.x"},
+                    "Properties": {"Handler": "lambda.handler", "Runtime": "nodejs18.x"},
                 }
             },
         }
@@ -1732,8 +1738,12 @@ class TestArtifactExporter(unittest.TestCase):
         # Redefining `make_zip` as is in local scope so that arguments passed to functools partial are re-loaded.
         windows_make_zip = functools.partial(
             make_zip_with_permissions,
-            file_permissions=0o100755 if platform.system().lower() == "windows" else None,
-            dir_permissions=0o100755 if platform.system().lower() == "windows" else None,
+            permission_mappers=[
+                WindowsFilePermissionPermissionMapper(permissions=0o100755),
+                WindowsDirPermissionPermissionMapper(permissions=0o100755),
+                AdditiveFilePermissionPermissionMapper(permissions=0o100444),
+                AdditiveDirPermissionPermissionMapper(permissions=0o100111),
+            ],
         )
 
         test_file_creator = FileCreator()
@@ -1776,6 +1786,8 @@ class TestArtifactExporter(unittest.TestCase):
         )
 
         dirname = test_file_creator.rootdir
+        file_permissions = os.stat(test_file_creator.full_path("index.js")).st_mode
+        dir_permissions = os.stat(test_file_creator.rootdir).st_mode
 
         expected_files = {"index.js"}
 
@@ -1795,9 +1807,11 @@ class TestArtifactExporter(unittest.TestCase):
                     permission_bits = (info.external_attr & external_attr_mask) >> 16
                     if not platform.system().lower() == "windows":
                         if info.is_dir():
-                            self.assertEqual(permission_bits, 0o100755)
+                            permission_difference = permission_bits ^ dir_permissions
+                            self.assertTrue(permission_difference <= 0o100111)
                         else:
-                            self.assertEqual(permission_bits, 0o100644)
+                            permission_difference = permission_bits ^ file_permissions
+                            self.assertTrue(permission_difference <= 0o100444)
                     else:
                         self.assertEqual(permission_bits, 0o100755)
 

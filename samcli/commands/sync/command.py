@@ -210,6 +210,7 @@ def cli(
         use_container,
         config_file,
         config_env,
+        None,  # TODO: replace with build_in_source once it's added as a click option
     )  # pragma: no cover
 
 
@@ -239,6 +240,7 @@ def do_cli(
     use_container: bool,
     config_file: str,
     config_env: str,
+    build_in_source: Optional[bool],
 ) -> None:
     """
     Implementation of the ``cli`` method
@@ -290,6 +292,7 @@ def do_cli(
         stack_name=stack_name,
         print_success_message=False,
         locate_layer_nested=True,
+        build_in_source=build_in_source,
     ) as build_context:
         built_template = os.path.join(build_dir, DEFAULT_TEMPLATE_NAME)
 
@@ -345,14 +348,28 @@ def do_cli(
                     poll_delay=poll_delay,
                     on_failure=None,
                 ) as deploy_context:
-                    with SyncContext(dependency_layer, build_context.build_dir, build_context.cache_dir):
+                    with SyncContext(
+                        dependency_layer, build_context.build_dir, build_context.cache_dir
+                    ) as sync_context:
                         if watch:
                             execute_watch(
-                                template_file, build_context, package_context, deploy_context, dependency_layer, code
+                                template_file,
+                                build_context,
+                                package_context,
+                                deploy_context,
+                                sync_context,
+                                dependency_layer,
+                                code,
                             )
                         elif code:
                             execute_code_sync(
-                                template_file, build_context, deploy_context, resource_id, resource, dependency_layer
+                                template_file,
+                                build_context,
+                                deploy_context,
+                                sync_context,
+                                resource_id,
+                                resource,
+                                dependency_layer,
                             )
                         else:
                             execute_infra_contexts(build_context, package_context, deploy_context)
@@ -386,6 +403,7 @@ def execute_code_sync(
     template: str,
     build_context: "BuildContext",
     deploy_context: "DeployContext",
+    sync_context: "SyncContext",
     resource_ids: Optional[Tuple[str]],
     resource_types: Optional[Tuple[str]],
     auto_dependency_layer: bool,
@@ -400,6 +418,8 @@ def execute_code_sync(
         BuildContext
     deploy_context : DeployContext
         DeployContext
+    sync_context: SyncContext
+        SyncContext object that obtains sync information.
     resource_ids : List[str]
         List of resource IDs to be synced.
     resource_types : List[str]
@@ -408,7 +428,7 @@ def execute_code_sync(
         Boolean flag to whether enable certain sync flows for auto dependency layer feature
     """
     stacks = SamLocalStackProvider.get_stacks(template)[0]
-    factory = SyncFlowFactory(build_context, deploy_context, stacks, auto_dependency_layer)
+    factory = SyncFlowFactory(build_context, deploy_context, sync_context, stacks, auto_dependency_layer)
     factory.load_physical_id_mapping()
     executor = SyncFlowExecutor()
 
@@ -432,6 +452,7 @@ def execute_watch(
     build_context: "BuildContext",
     package_context: "PackageContext",
     deploy_context: "DeployContext",
+    sync_context: "SyncContext",
     auto_dependency_layer: bool,
     skip_infra_syncs: bool,
 ):
@@ -447,9 +468,15 @@ def execute_watch(
         PackageContext
     deploy_context : DeployContext
         DeployContext
+    sync_context: SyncContext
+        SyncContext object that obtains sync information.
+    auto_dependency_layer: bool
+        Boolean flag to whether enable certain sync flows for auto dependency layer feature.
+    skip_infra_syncs: bool
+        Boolean flag to determine if only ececute code syncs.
     """
     watch_manager = WatchManager(
-        template, build_context, package_context, deploy_context, auto_dependency_layer, skip_infra_syncs
+        template, build_context, package_context, deploy_context, sync_context, auto_dependency_layer, skip_infra_syncs
     )
     watch_manager.start()
 

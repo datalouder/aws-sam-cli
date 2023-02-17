@@ -14,6 +14,7 @@ from samcli.commands.local.lib.exceptions import (
     OverridesNotWellDefinedError,
     NoPrivilegeException,
     InvalidIntermediateImageError,
+    UnsupportedInlineCodeError,
 )
 from samcli.lib.providers.provider import Function
 from samcli.lib.providers.sam_function_provider import SamFunctionProvider
@@ -120,6 +121,11 @@ class LocalLambdaRunner:
 
         LOG.debug("Found one Lambda function with name '%s'", function_identifier)
         if function.packagetype == ZIP:
+            if function.inlinecode:
+                raise UnsupportedInlineCodeError(
+                    "Inline code is not supported for sam local commands."
+                    f" Please write your code in a separate file for the function {function.function_id}."
+                )
             LOG.info("Invoking %s (%s)", function.handler, function.runtime)
         elif function.packagetype == IMAGE:
             if not function.imageuri:
@@ -210,6 +216,7 @@ class LocalLambdaRunner:
             memory=function.memory,
             timeout=function_timeout,
             env_vars=env_vars,
+            runtime_management_config=function.runtime_management_config,
         )
 
     def _make_env_vars(self, function: Function) -> EnvironmentVariables:

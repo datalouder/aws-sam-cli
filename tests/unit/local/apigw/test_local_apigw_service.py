@@ -19,6 +19,7 @@ from samcli.local.apigw.local_apigw_service import (
     CatchAllPathConverter,
 )
 from samcli.local.lambdafn.exceptions import FunctionNotFound
+from samcli.commands.local.lib.exceptions import UnsupportedInlineCodeError
 
 
 class TestApiGatewayService(TestCase):
@@ -258,10 +259,9 @@ class TestApiGatewayService(TestCase):
         parse_output_mock.return_value = ("status_code", Headers({"headers": "headers"}), "body")
         self.api_service._parse_v1_payload_format_lambda_output = parse_output_mock
 
-        lambda_logs = "logs"
         lambda_response = "response"
         is_customer_error = False
-        lambda_output_parser_mock.get_lambda_output.return_value = lambda_response, lambda_logs, is_customer_error
+        lambda_output_parser_mock.get_lambda_output.return_value = lambda_response, is_customer_error
         service_response_mock = Mock()
         service_response_mock.return_value = make_response_mock
         self.api_service.service_response = service_response_mock
@@ -273,8 +273,6 @@ class TestApiGatewayService(TestCase):
 
         # Make sure the parse method is called only on the returned response and not on the raw data from stdout
         parse_output_mock.assert_called_with(lambda_response, ANY, ANY, Route.API)
-        # Make sure the logs are written to stderr
-        self.stderr.write.assert_called_with(lambda_logs)
 
     @patch.object(LocalApigwService, "get_request_methods_endpoints")
     def test_request_handler_returns_make_response(self, request_mock):
@@ -389,6 +387,25 @@ class TestApiGatewayService(TestCase):
         response = self.api_service._request_handler()
 
         self.assertEqual(response, not_found_response_mock)
+
+    @patch.object(LocalApigwService, "get_request_methods_endpoints")
+    @patch("samcli.local.apigw.local_apigw_service.ServiceErrorResponses")
+    def test_request_handles_error_when_invoke_function_with_inline_code(
+        self, service_error_responses_patch, request_mock
+    ):
+        not_implemented_response_mock = Mock()
+        self.api_service._construct_v_1_0_event = Mock()
+        self.api_service._get_current_route = MagicMock()
+        self.api_service._get_current_route.return_value.payload_format_version = "2.0"
+        self.api_service._get_current_route.methods = []
+
+        service_error_responses_patch.not_implemented_locally.return_value = not_implemented_response_mock
+
+        self.lambda_runner.invoke.side_effect = UnsupportedInlineCodeError(message="Inline code is not supported")
+        request_mock.return_value = ("test", "test")
+        response = self.api_service._request_handler()
+
+        self.assertEqual(response, not_implemented_response_mock)
 
     @patch.object(LocalApigwService, "get_request_methods_endpoints")
     def test_request_throws_when_invoke_fails(self, request_mock):
