@@ -18,12 +18,7 @@ from samcli.lib.sync.flows.layer_sync_flow import FunctionLayerReferenceSync
 class TestAutoDependencyLayerParentSyncFlow(TestCase):
     def setUp(self) -> None:
         self.sync_flow = AutoDependencyLayerParentSyncFlow(
-            "function_identifier",
-            Mock(),
-            Mock(stack_name="stack_name"),
-            Mock(),
-            Mock(),
-            [Mock()],
+            "function_identifier", Mock(), Mock(stack_name="stack_name"), Mock(), Mock(), [Mock()], None
         )
 
     @patch("samcli.lib.sync.flows.auto_dependency_layer_sync_flow.super")
@@ -63,6 +58,7 @@ class TestAutoDependencyLayerSyncFlow(TestCase):
             Mock(),
             Mock(),
             [Mock()],
+            None,
         )
 
     def test_gather_resources_fail_when_no_function_build_definition_found(self):
@@ -101,6 +97,7 @@ class TestAutoDependencyLayerSyncFlow(TestCase):
         patched_tempfile.gettempdir.return_value = tmpdir
         patched_uuid.uuid4.return_value = Mock(hex=uuid_hex)
         patched_make_zip.return_value = zipfile
+        patched_file_checksum.return_value = "hash"
         self.build_graph.get_function_build_definitions.return_value = [Mock(dependencies_dir=dependencies_dir)]
 
         with patch.object(self.sync_flow, "_get_compatible_runtimes") as patched_comp_runtimes:
@@ -115,6 +112,7 @@ class TestAutoDependencyLayerSyncFlow(TestCase):
                 os.path.join(tmpdir, f"data-{uuid_hex}"), self.sync_flow._artifact_folder
             )
             patched_file_checksum.assert_called_with(zipfile, ANY)
+            self.assertEqual(self.sync_flow._local_sha, "hash")
 
     def test_empty_gather_dependencies(self):
         with patch.object(self.sync_flow, "_get_dependent_functions") as patched_get_dependent_functions:
@@ -124,6 +122,8 @@ class TestAutoDependencyLayerSyncFlow(TestCase):
     def test_gather_dependencies(self):
         layer_identifier = "layer_identifier"
         self.sync_flow._layer_identifier = layer_identifier
+        layer_arn = "layer_arn"
+        self.sync_flow._layer_arn = layer_arn
         with patch.object(self.sync_flow, "_get_dependent_functions") as patched_get_dependent_functions:
             patched_get_dependent_functions.return_value = [
                 Mock(layers=[Mock(full_path=layer_identifier)], full_path="Function")

@@ -2,8 +2,8 @@
 Row Definition and Row Modifiers to be used with `click.HelpFormatter write_dl methods`.
 """
 
-from typing import NamedTuple, List
 from abc import ABC
+from typing import List, NamedTuple
 
 from click import style
 
@@ -16,6 +16,7 @@ class RowModifier(ABC):
 class RowDefinition(NamedTuple):
     name: str = ""
     text: str = ""
+    rank: int = 0
     extra_row_modifiers: List[RowModifier] = []
 
 
@@ -26,7 +27,7 @@ class BaseLineRowModifier(RowModifier):
     def apply(self, row: RowDefinition, justification_length: int):
         return RowDefinition(
             name=row.name.ljust(justification_length if justification_length else self.justification_length),
-            text=row.text.strip(),
+            text=row.text.strip().ljust(justification_length if justification_length else self.justification_length),
         )
 
 

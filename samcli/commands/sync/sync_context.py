@@ -6,11 +6,11 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, cast, Dict
+from typing import Dict, Optional, cast
 
 import tomlkit
-from tomlkit.toml_document import TOMLDocument
 from tomlkit.items import Item
+from tomlkit.toml_document import TOMLDocument
 
 from samcli.lib.build.build_graph import DEFAULT_DEPENDENCIES_DIR
 from samcli.lib.utils.osutils import rmtree_if_exists
@@ -25,6 +25,7 @@ RESOURCE_SYNC_STATES = "resource_sync_states"
 HASH = "hash"
 SYNC_TIME = "sync_time"
 DEPENDENCY_LAYER = "dependency_layer"
+LATEST_INFRA_SYNC_TIME = "latest_infra_sync_time"
 
 # global lock for writing to file
 _lock = threading.Lock()
@@ -40,9 +41,27 @@ class ResourceSyncState:
 class SyncState:
     dependency_layer: bool
     resource_sync_states: Dict[str, ResourceSyncState]
+    latest_infra_sync_time: Optional[datetime]
 
-    def update_resource_sync_state(self, resource_id: str, hash_value: str):
+    def update_resource_sync_state(self, resource_id: str, hash_value: str) -> None:
+        """
+        Updates the sync_state information for the provided resource_id
+        to be stored in the TOML file.
+
+        Parameters
+        -------
+        resource_id: str
+            The resource identifier of the resource
+        hash_value: str
+            The logical ID identifier of the resource
+        """
         self.resource_sync_states[resource_id] = ResourceSyncState(hash_value, datetime.utcnow())
+
+    def update_infra_sync_time(self) -> None:
+        """
+        Updates the last infra sync time to be stored in the TOML file.
+        """
+        self.latest_infra_sync_time = datetime.utcnow()
 
 
 def _sync_state_to_toml_document(sync_state: SyncState) -> TOMLDocument:
@@ -61,6 +80,8 @@ def _sync_state_to_toml_document(sync_state: SyncState) -> TOMLDocument:
     """
     sync_state_toml_table = tomlkit.table()
     sync_state_toml_table[DEPENDENCY_LAYER] = sync_state.dependency_layer
+    if sync_state.latest_infra_sync_time:
+        sync_state_toml_table[LATEST_INFRA_SYNC_TIME] = sync_state.latest_infra_sync_time.isoformat()
 
     resource_sync_states_toml_table = tomlkit.table()
     for resource_id in sync_state.resource_sync_states:
@@ -106,7 +127,6 @@ def _toml_document_to_sync_state(toml_document: Dict) -> Optional[SyncState]:
     resource_sync_states = dict()
     if resource_sync_states_toml_table:
         for resource_id in resource_sync_states_toml_table:
-
             resource_sync_state_toml_table = resource_sync_states_toml_table.get(resource_id)
             resource_sync_state = ResourceSyncState(
                 resource_sync_state_toml_table.get(HASH),
@@ -118,30 +138,36 @@ def _toml_document_to_sync_state(toml_document: Dict) -> Optional[SyncState]:
             resource_sync_states[resource_sync_state_resource_id] = resource_sync_state
 
     dependency_layer = False
+    latest_infra_sync_time = None
     if sync_state_toml_table:
         dependency_layer = sync_state_toml_table.get(DEPENDENCY_LAYER)
-    sync_state = SyncState(dependency_layer, resource_sync_states)
+        latest_infra_sync_time = sync_state_toml_table.get(LATEST_INFRA_SYNC_TIME)
+        if latest_infra_sync_time:
+            latest_infra_sync_time = datetime.fromisoformat(str(latest_infra_sync_time))
+    sync_state = SyncState(dependency_layer, resource_sync_states, latest_infra_sync_time)
 
     return sync_state
 
 
 class SyncContext:
-
     _current_state: SyncState
     _previous_state: Optional[SyncState]
     _build_dir: Path
     _cache_dir: Path
     _file_path: Path
+    skip_deploy_sync: bool
 
-    def __init__(self, dependency_layer: bool, build_dir: str, cache_dir: str):
-        self._current_state = SyncState(dependency_layer, dict())
+    def __init__(self, dependency_layer: bool, build_dir: str, cache_dir: str, skip_deploy_sync: bool):
+        self._current_state = SyncState(dependency_layer, dict(), None)
         self._previous_state = None
+        self.skip_deploy_sync = skip_deploy_sync
         self._build_dir = Path(build_dir)
         self._cache_dir = Path(cache_dir)
         self._file_path = Path(build_dir).parent.joinpath(DEFAULT_SYNC_STATE_FILE_NAME)
 
     def __enter__(self) -> "SyncContext":
-        self._read()
+        with _lock:
+            self._read()
         LOG.debug(
             "Entering sync context, previous state: %s, current state: %s", self._previous_state, self._current_state
         )
@@ -153,7 +179,34 @@ class SyncContext:
         return self
 
     def __exit__(self, *args) -> None:
-        self._write()
+        with _lock:
+            self._write()
+
+    def update_infra_sync_time(self) -> None:
+        """
+        Updates the last infra sync time and stores it in the TOML file.
+        """
+        with _lock:
+            LOG.debug("Updating latest_infra_sync_time in sync state")
+            self._current_state.update_infra_sync_time()
+            self._write()
+
+    def get_latest_infra_sync_time(self) -> Optional[datetime]:
+        """
+        Returns the time last infra sync happened.
+
+        Returns
+        -------
+        Optional[datetime]
+            The last infra sync time if it exists
+        """
+        with _lock:
+            infra_sync_time = self._current_state.latest_infra_sync_time
+            if not infra_sync_time:
+                LOG.debug("No record of previous infrastructure sync time found from sync.toml file")
+                return None
+            LOG.debug("Latest infra sync happened at %s ", infra_sync_time)
+            return infra_sync_time
 
     def update_resource_sync_state(self, resource_id: str, hash_value: str) -> None:
         """
@@ -167,9 +220,10 @@ class SyncContext:
         hash_value: str
             The logical ID identifier of the resource
         """
-        LOG.debug("Updating resource_sync_state for resource %s with hash %s", resource_id, hash_value)
-        self._current_state.update_resource_sync_state(resource_id, hash_value)
-        self._write()
+        with _lock:
+            LOG.debug("Updating resource_sync_state for resource %s with hash %s", resource_id, hash_value)
+            self._current_state.update_resource_sync_state(resource_id, hash_value)
+            self._write()
 
     def get_resource_latest_sync_hash(self, resource_id: str) -> Optional[str]:
         """
@@ -186,19 +240,19 @@ class SyncContext:
         Optional[str]
             The hash of the resource stored in resource_sync_state if it exists
         """
-        resource_sync_state = self._current_state.resource_sync_states.get(resource_id)
-        if not resource_sync_state:
-            LOG.debug("No latest hash found for resource %s", resource_id)
-            return None
-        LOG.debug(
-            "Latest resource_sync_state hash %s found for resource %s", resource_id, resource_sync_state.hash_value
-        )
-        return resource_sync_state.hash_value
+        with _lock:
+            resource_sync_state = self._current_state.resource_sync_states.get(resource_id)
+            if not resource_sync_state:
+                LOG.debug("No record of latest hash found for resource %s found in sync.toml file", resource_id)
+                return None
+            LOG.debug(
+                "Latest resource_sync_state hash %s found for resource %s", resource_id, resource_sync_state.hash_value
+            )
+            return resource_sync_state.hash_value
 
     def _write(self) -> None:
-        with _lock:
-            with open(self._file_path, "w+") as file:
-                file.write(tomlkit.dumps(_sync_state_to_toml_document(self._current_state)))
+        with open(self._file_path, "w+") as file:
+            file.write(tomlkit.dumps(_sync_state_to_toml_document(self._current_state)))
 
     def _read(self) -> None:
         try:
@@ -207,6 +261,7 @@ class SyncContext:
             self._previous_state = _toml_document_to_sync_state(toml_document)
             if self._previous_state:
                 self._current_state.resource_sync_states = self._previous_state.resource_sync_states
+                self._current_state.latest_infra_sync_time = self._previous_state.latest_infra_sync_time
         except OSError:
             LOG.debug("Missing previous sync state, will create a new file at the end of this execution")
 

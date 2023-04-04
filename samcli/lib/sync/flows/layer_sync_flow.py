@@ -8,19 +8,19 @@ import shutil
 import tempfile
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, TYPE_CHECKING, cast, Dict, List, Optional
 from contextlib import ExitStack
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
-from samcli.lib.build.app_builder import ApplicationBuilder
+from samcli.lib.build.app_builder import ApplicationBuilder, ApplicationBuildResult
 from samcli.lib.package.utils import make_zip_with_lambda_permissions
-from samcli.lib.providers.provider import ResourceIdentifier, Stack, get_resource_by_id, Function, LayerVersion
+from samcli.lib.providers.provider import Function, LayerVersion, ResourceIdentifier, Stack, get_resource_by_id
 from samcli.lib.providers.sam_function_provider import SamFunctionProvider
 from samcli.lib.sync.exceptions import MissingPhysicalResourceError, NoLayerVersionsFoundError
-from samcli.lib.sync.sync_flow import SyncFlow, ResourceAPICall, ApiCallTypes
+from samcli.lib.sync.flows.function_sync_flow import wait_for_function_update_complete
+from samcli.lib.sync.sync_flow import ApiCallTypes, ResourceAPICall, SyncFlow
 from samcli.lib.sync.sync_flow_executor import HELP_TEXT_FOR_SYNC_INFRA
 from samcli.lib.utils.colors import Colored
-from samcli.lib.utils.hash import file_checksum
-from samcli.lib.sync.flows.function_sync_flow import wait_for_function_update_complete
+from samcli.lib.utils.hash import file_checksum, str_checksum
 from samcli.lib.utils.osutils import rmtree_if_exists
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -52,7 +52,6 @@ class AbstractLayerSyncFlow(SyncFlow, ABC):
     _layer_identifier: str
     _artifact_folder: Optional[str]
     _zip_file: Optional[str]
-    _local_sha: Optional[str]
 
     def __init__(
         self,
@@ -62,6 +61,7 @@ class AbstractLayerSyncFlow(SyncFlow, ABC):
         sync_context: "SyncContext",
         physical_id_mapping: Dict[str, str],
         stacks: List[Stack],
+        application_build_result: Optional[ApplicationBuildResult],
     ):
         super().__init__(
             build_context,
@@ -70,6 +70,7 @@ class AbstractLayerSyncFlow(SyncFlow, ABC):
             physical_id_mapping,
             f"Layer {layer_identifier}",
             stacks,
+            application_build_result,
         )
         self._layer_identifier = layer_identifier
         self._layer_arn = None
@@ -81,6 +82,16 @@ class AbstractLayerSyncFlow(SyncFlow, ABC):
     def set_up(self) -> None:
         super().set_up()
         self._lambda_client = self._boto_client("lambda")
+
+    @property
+    def sync_state_identifier(self) -> str:
+        """
+        Sync state is the unique identifier for each sync flow
+        In sync state toml file we will store
+        Key as LayerSyncFlow:LayerLogicalId
+        Value as layer ZIP hash
+        """
+        return self.__class__.__name__ + ":" + self._layer_identifier
 
     def compare_remote(self) -> bool:
         """
@@ -198,8 +209,17 @@ class LayerSyncFlow(AbstractLayerSyncFlow):
         sync_context: "SyncContext",
         physical_id_mapping: Dict[str, str],
         stacks: List[Stack],
+        application_build_result: Optional[ApplicationBuildResult],
     ):
-        super().__init__(layer_identifier, build_context, deploy_context, sync_context, physical_id_mapping, stacks)
+        super().__init__(
+            layer_identifier,
+            build_context,
+            deploy_context,
+            sync_context,
+            physical_id_mapping,
+            stacks,
+            application_build_result,
+        )
         self._layer = cast(LayerVersion, build_context.layer_provider.get(self._layer_identifier))
 
     def set_up(self) -> None:
@@ -230,8 +250,25 @@ class LayerSyncFlow(AbstractLayerSyncFlow):
 
     def gather_resources(self) -> None:
         """Build layer and ZIP it into a temp file in self._zip_file"""
-        with self._get_lock_chain():
+        if self._application_build_result:
+            LOG.debug("Using pre-built resources for layer {}", self._layer_identifier)
+            self._use_prebuilt_resources(self._application_build_result)
+        else:
+            LOG.debug("Building layer from scratch {}", self._layer_identifier)
+            self._build_resources_from_scratch()
 
+        zip_file_path = os.path.join(tempfile.gettempdir(), f"data-{uuid.uuid4().hex}")
+        self._zip_file = make_zip_with_lambda_permissions(zip_file_path, self._artifact_folder)
+        LOG.debug("%sCreated artifact ZIP file: %s", self.log_prefix, self._zip_file)
+        self._local_sha = file_checksum(cast(str, self._zip_file), hashlib.sha256())
+
+    def _use_prebuilt_resources(self, application_build_result: ApplicationBuildResult) -> None:
+        """Uses pre-build artifacts and assigns artifact_folder"""
+        self._artifact_folder = application_build_result.artifacts.get(self._layer_identifier)
+
+    def _build_resources_from_scratch(self) -> None:
+        """Builds layer from scratch and assigns artifact_folder"""
+        with self._get_lock_chain():
             rmtree_if_exists(self._layer.get_build_dir(self._build_context.build_dir))
             builder = ApplicationBuilder(
                 self._build_context.collect_build_resources(self._layer_identifier),
@@ -247,11 +284,6 @@ class LayerSyncFlow(AbstractLayerSyncFlow):
             )
             LOG.debug("%sBuilding Layer", self.log_prefix)
             self._artifact_folder = builder.build().artifacts.get(self._layer_identifier)
-
-        zip_file_path = os.path.join(tempfile.gettempdir(), f"data-{uuid.uuid4().hex}")
-        self._zip_file = make_zip_with_lambda_permissions(zip_file_path, self._artifact_folder)
-        LOG.debug("%sCreated artifact ZIP file: %s", self.log_prefix, self._zip_file)
-        self._local_sha = file_checksum(cast(str, self._zip_file), hashlib.sha256())
 
     def _get_compatible_runtimes(self):
         layer_resource = cast(Dict[str, Any], self._get_resource(self._layer_identifier))
@@ -332,6 +364,16 @@ class FunctionLayerReferenceSync(SyncFlow):
         self._new_layer_version = new_layer_version
         self._color = Colored()
 
+    @property
+    def sync_state_identifier(self) -> str:
+        """
+        Sync state is the unique identifier for each sync flow
+        In sync state toml file we will store
+        Key as FunctionLayerReferenceSync:FunctionLogicalId:LayerArn
+        Value as LayerVersion hash
+        """
+        return self.__class__.__name__ + ":" + self._function_identifier + ":" + self._layer_arn
+
     def set_up(self) -> None:
         super().set_up()
         self._lambda_client = self._boto_client("lambda")
@@ -340,6 +382,7 @@ class FunctionLayerReferenceSync(SyncFlow):
         if not self._new_layer_version:
             LOG.debug("No layer version set for %s, fetching latest one", self._layer_arn)
             self._new_layer_version = get_latest_layer_version(self._lambda_client, self._layer_arn)
+        self._local_sha = str_checksum(str(self._new_layer_version), hashlib.sha256())
 
     def sync(self) -> None:
         """

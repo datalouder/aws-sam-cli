@@ -1,27 +1,25 @@
 """
 Generates a Docker Image to be used for invoking a function locally
 """
-from typing import Optional
-import uuid
-import logging
 import hashlib
+import logging
+import platform
+import re
+import sys
+import uuid
 from enum import Enum
 from pathlib import Path
+from typing import Optional
 
-import sys
-import re
-import platform
 import docker
 
 from samcli.commands.local.cli_common.user_exceptions import ImageBuildException
 from samcli.commands.local.lib.exceptions import InvalidIntermediateImageError
 from samcli.lib.utils.architecture import has_runtime_multi_arch_image
-from samcli.lib.utils.packagetype import ZIP, IMAGE
+from samcli.lib.utils.packagetype import IMAGE, ZIP
 from samcli.lib.utils.stream_writer import StreamWriter
 from samcli.lib.utils.tar import create_tarball
-from samcli.local.docker.utils import get_rapid_name, get_docker_platform
-
-from samcli import __version__ as version
+from samcli.local.docker.utils import get_docker_platform, get_rapid_name
 
 LOG = logging.getLogger(__name__)
 
@@ -36,6 +34,7 @@ class Runtime(Enum):
     python37 = "python3.7"
     python38 = "python3.8"
     python39 = "python3.9"
+    python310 = "python3.10"
     ruby27 = "ruby2.7"
     java8 = "java8"
     java8al2 = "java8.al2"
@@ -154,11 +153,11 @@ class LambdaImage:
         if packagetype == IMAGE:
             base_image = image
         elif packagetype == ZIP:
+            runtime_image_tag = Runtime.get_image_name_tag(runtime, architecture)
             if self.invoke_images:
                 base_image = self.invoke_images.get(function_name, self.invoke_images.get(None))
             if not base_image:
                 # Gets the ECR image format like `python:3.7` or `nodejs:16-x86_64`
-                runtime_image_tag = Runtime.get_image_name_tag(runtime, architecture)
                 runtime_only_number = re.split("[:-]", runtime_image_tag)[1]
                 tag_prefix = f"{runtime_only_number}-"
                 base_image = f"{self._INVOKE_REPO_PREFIX}/{runtime_image_tag}"

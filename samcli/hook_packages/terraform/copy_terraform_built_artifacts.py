@@ -42,14 +42,16 @@ Note: This script intentionally does not use Python3 specific syntax.
 # pylint: skip-file
 
 import argparse
-import re
-import os
 import json
-import shutil
-import sys
-import subprocess
-import zipfile
 import logging
+import os
+import re
+import shutil
+import subprocess
+import sys
+import zipfile
+
+from zip import unzip  # type: ignore
 
 LOG = logging.getLogger(__name__)
 
@@ -252,8 +254,7 @@ def find_and_copy_assets(directory_path, expression, data_object):
 
     try:
         if zipfile.is_zipfile(abs_attribute_path):
-            with zipfile.ZipFile(abs_attribute_path, "r") as z:
-                z.extractall(directory_path)
+            unzip(abs_attribute_path, directory_path)
         else:
             copytree(abs_attribute_path, directory_path)
     except OSError as ex:
@@ -340,7 +341,7 @@ if __name__ == "__main__":
     LOG.info("Parsing terraform output")
     try:
         data_object = json.loads(terraform_out)
-    except ValueError as ex:
+    except ValueError:
         LOG.error("Parsing JSON from terraform out unsuccessful!", exc_info=True)
         cli_exit()
 

@@ -1,22 +1,22 @@
 """Base SyncFlow for Lambda Function"""
+import logging
+import time
 from abc import ABC
 from enum import Enum
-import logging
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
-import time
-from typing import Any, Dict, List, TYPE_CHECKING, cast
 from botocore.client import BaseClient
 
+from samcli.lib.build.app_builder import ApplicationBuildResult
+from samcli.lib.providers.provider import Function, Stack
 from samcli.lib.providers.sam_function_provider import SamFunctionProvider
 from samcli.lib.sync.flows.alias_version_sync_flow import AliasVersionSyncFlow
-from samcli.lib.providers.provider import Function, Stack
+from samcli.lib.sync.sync_flow import SyncFlow
 from samcli.local.lambdafn.exceptions import FunctionNotFound
 
-from samcli.lib.sync.sync_flow import SyncFlow
-
 if TYPE_CHECKING:  # pragma: no cover
-    from samcli.commands.deploy.deploy_context import DeployContext
     from samcli.commands.build.build_context import BuildContext
+    from samcli.commands.deploy.deploy_context import DeployContext
     from samcli.commands.sync.sync_context import SyncContext
 
 LOG = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ class FunctionSyncFlow(SyncFlow, ABC):
         sync_context: "SyncContext",
         physical_id_mapping: Dict[str, str],
         stacks: List[Stack],
+        application_build_result: Optional[ApplicationBuildResult],
     ):
         """
         Parameters
@@ -55,6 +56,8 @@ class FunctionSyncFlow(SyncFlow, ABC):
             Physical ID Mapping
         stacks : Optional[List[Stack]]
             Stacks
+        application_build_result: Optional[ApplicationBuildResult]
+            Pre-build ApplicationBuildResult which can be re-used during SyncFlows
         """
         super().__init__(
             build_context,
@@ -63,6 +66,7 @@ class FunctionSyncFlow(SyncFlow, ABC):
             physical_id_mapping,
             log_name="Lambda Function " + function_identifier,
             stacks=stacks,
+            application_build_result=application_build_result,
         )
         self._function_identifier = function_identifier
         self._function_provider = self._build_context.function_provider
@@ -75,6 +79,16 @@ class FunctionSyncFlow(SyncFlow, ABC):
         super().set_up()
         self._lambda_client = self._boto_client("lambda")
         self._lambda_waiter = self._lambda_client.get_waiter("function_updated")
+
+    @property
+    def sync_state_identifier(self) -> str:
+        """
+        Sync state is the unique identifier for each sync flow
+        In sync state toml file we will store
+        Key as ZipFunctionSyncFlow:FunctionLogicalId
+        Value as function ZIP hash
+        """
+        return self.__class__.__name__ + ":" + self._function_identifier
 
     def gather_dependencies(self) -> List[SyncFlow]:
         """Gathers alias and versions related to a function.
@@ -106,7 +120,7 @@ class FunctionSyncFlow(SyncFlow, ABC):
                     self._stacks,
                 )
             )
-            LOG.debug("%sCreated  Alias and Version SyncFlow", self.log_prefix)
+            LOG.debug("%sCreated Alias and Version SyncFlow", self.log_prefix)
 
         return sync_flows
 
