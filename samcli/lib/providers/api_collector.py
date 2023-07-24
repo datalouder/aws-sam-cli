@@ -9,7 +9,7 @@ from collections import defaultdict
 from typing import Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from samcli.lib.providers.provider import Api, Cors
-from samcli.lib.utils.colors import Colored
+from samcli.lib.utils.colors import Colored, Colors
 from samcli.local.apigw.authorizers.authorizer import Authorizer
 from samcli.local.apigw.route import Route
 
@@ -108,13 +108,13 @@ class ApiCollector:
                     continue
 
                 if not authorizer_object and authorizer_name_lookup:
-                    route.authorizer_name = None
-
                     LOG.info(
                         "Linking authorizer skipped for route '%s', authorizer '%s' is unsupported or not found",
                         route.path,
                         route.authorizer_name,
                     )
+
+                    route.authorizer_name = None
 
     def add_routes(self, logical_id: str, routes: List[Route]) -> None:
         """
@@ -197,7 +197,7 @@ and authorizers deployed on AWS. Any application critical behavior should
 be validated thoroughly before deploying to production.
 
 Testing application behaviour against authorizers deployed on AWS can be done using the sam sync command.{os.linesep}"""
-                LOG.warning(Colored().yellow(message))
+                LOG.warning(Colored().color_log(message, color=Colors.WARNING), extra=dict(markup=True))
 
                 break
 

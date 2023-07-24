@@ -2,12 +2,17 @@ import os
 import tempfile
 
 from pathlib import Path
-from unittest import TestCase
-from unittest.mock import MagicMock
+from unittest import TestCase, skipIf
+from unittest.mock import MagicMock, patch
+
+import tomlkit
 
 from samcli.commands.exceptions import ConfigException
-from samcli.cli.cli_config_file import TomlProvider, configuration_option, configuration_callback, get_ctx_defaults
+from samcli.cli.cli_config_file import ConfigProvider, configuration_option, configuration_callback, get_ctx_defaults
+from samcli.lib.config.exceptions import SamConfigFileReadException, SamConfigVersionException
 from samcli.lib.config.samconfig import DEFAULT_ENV
+
+from tests.testing_utils import IS_WINDOWS
 
 
 class MockContext:
@@ -19,9 +24,9 @@ class MockContext:
         self.default_map = default_map
 
 
-class TestTomlProvider(TestCase):
+class TestConfigProvider(TestCase):
     def setUp(self):
-        self.toml_provider = TomlProvider()
+        self.config_provider = ConfigProvider()
         self.config_env = "config_env"
         self.parameters = "parameters"
         self.cmd_name = "topic"
@@ -31,29 +36,30 @@ class TestTomlProvider(TestCase):
         config_path = Path(config_dir, "samconfig.toml")
         config_path.write_text("version=0.1\n[config_env.topic.parameters]\nword='clarity'\n")
         self.assertEqual(
-            TomlProvider(section=self.parameters)(config_path, self.config_env, [self.cmd_name]), {"word": "clarity"}
+            ConfigProvider(section=self.parameters)(config_path, self.config_env, [self.cmd_name]), {"word": "clarity"}
         )
 
     def test_toml_valid_with_no_version(self):
         config_dir = tempfile.gettempdir()
         config_path = Path(config_dir, "samconfig.toml")
         config_path.write_text("[config_env.topic.parameters]\nword='clarity'\n")
-        with self.assertRaises(ConfigException):
-            TomlProvider(section=self.parameters)(config_path, self.config_env, [self.cmd_name])
+        with self.assertRaises(SamConfigVersionException):
+            ConfigProvider(section=self.parameters)(config_path, self.config_env, [self.cmd_name])
 
     def test_toml_valid_with_invalid_version(self):
         config_dir = tempfile.gettempdir()
         config_path = Path(config_dir, "samconfig.toml")
         config_path.write_text("version='abc'\n[config_env.topic.parameters]\nword='clarity'\n")
-        with self.assertRaises(ConfigException):
-            TomlProvider(section=self.parameters)(config_path, self.config_env, [self.cmd_name])
+        with self.assertRaises(SamConfigVersionException):
+            ConfigProvider(section=self.parameters)(config_path, self.config_env, [self.cmd_name])
 
     def test_toml_invalid_empty_dict(self):
         config_dir = tempfile.gettempdir()
         config_path = Path(config_dir, "samconfig.toml")
         config_path.write_text("[topic]\nword=clarity\n")
 
-        self.assertEqual(self.toml_provider(config_dir, self.config_env, [self.cmd_name]), {})
+        with self.assertRaises(SamConfigFileReadException):
+            self.config_provider(config_path, self.config_env, [self.cmd_name])
 
     def test_toml_invalid_file_name(self):
         config_dir = tempfile.gettempdir()
@@ -61,16 +67,16 @@ class TestTomlProvider(TestCase):
         config_path.write_text("version=0.1\n[config_env.topic.parameters]\nword='clarity'\n")
         config_path_invalid = Path(config_dir, "samconfig.toml")
 
-        with self.assertRaises(ConfigException):
-            self.toml_provider(config_path_invalid, self.config_env, [self.cmd_name])
+        with self.assertRaises(SamConfigFileReadException):
+            self.config_provider(config_path_invalid, self.config_env, [self.cmd_name])
 
     def test_toml_invalid_syntax(self):
         config_dir = tempfile.gettempdir()
         config_path = Path(config_dir, "samconfig.toml")
         config_path.write_text("version=0.1\n[config_env.topic.parameters]\nword=_clarity'\n")
 
-        with self.assertRaises(ConfigException):
-            self.toml_provider(config_path, self.config_env, [self.cmd_name])
+        with self.assertRaises(SamConfigFileReadException):
+            self.config_provider(config_path, self.config_env, [self.cmd_name])
 
 
 class TestCliConfiguration(TestCase):
@@ -85,6 +91,7 @@ class TestCliConfiguration(TestCase):
         self.param = MagicMock()
         self.value = MagicMock()
         self.config_file = "otherconfig.toml"
+        self.config_file_pipe = "config"
 
     class Dummy:
         pass
@@ -118,6 +125,7 @@ class TestCliConfiguration(TestCase):
         self.ctx.parent = mock_context3
         self.ctx.info_name = "test_info"
         self.ctx.params = {"config_file": "invalid_config_file"}
+        self.ctx._parameter_source.__get__ = "COMMANDLINE"
         setattr(self.ctx, "samconfig_dir", None)
         with self.assertRaises(ConfigException):
             configuration_callback(
@@ -159,9 +167,43 @@ class TestCliConfiguration(TestCase):
             self.assertIn(arg, self.saved_callback.call_args[0])
         self.assertNotIn(self.value, self.saved_callback.call_args[0])
 
+    @skipIf(IS_WINDOWS, "os.mkfifo doesn't exist on windows")
+    def test_callback_with_config_file_from_pipe(self):
+        mock_context1 = MockContext(info_name="sam", parent=None)
+        mock_context2 = MockContext(info_name="local", parent=mock_context1)
+        mock_context3 = MockContext(info_name="start-api", parent=mock_context2)
+        self.ctx.parent = mock_context3
+        self.ctx.info_name = "test_info"
+        # Create a temporary directory.
+        temp_dir = tempfile.mkdtemp()
+        # Create a new config file path that is one layer above the temporary directory.
+        config_file_pipe_path = Path(temp_dir).parent.joinpath(self.config_file_pipe)
+        try:
+            # Create a new pipe
+            os.mkfifo(config_file_pipe_path)
+            # Set the `samconfig_dir` to be temporary directory that was created.
+            setattr(self.ctx, "samconfig_dir", temp_dir)
+            # set a relative path for the config file from `samconfig_dir`.
+            self.ctx.params = {"config_file": os.path.join("..", self.config_file_pipe)}
+            configuration_callback(
+                cmd_name=self.cmd_name,
+                option_name=self.option_name,
+                saved_callback=self.saved_callback,
+                provider=self.provider,
+                ctx=self.ctx,
+                param=self.param,
+                value=self.value,
+            )
+        finally:
+            os.remove(config_file_pipe_path)
+        self.assertEqual(self.saved_callback.call_count, 1)
+        for arg in [self.ctx, self.param, DEFAULT_ENV]:
+            self.assertIn(arg, self.saved_callback.call_args[0])
+        self.assertNotIn(self.value, self.saved_callback.call_args[0])
+
     def test_configuration_option(self):
-        toml_provider = TomlProvider()
-        click_option = configuration_option(provider=toml_provider)
+        config_provider = ConfigProvider()
+        click_option = configuration_option(provider=config_provider)
         clc = click_option(self.Dummy())
         self.assertEqual(clc.__click_params__[0].is_eager, True)
         self.assertEqual(
@@ -170,7 +212,7 @@ class TestCliConfiguration(TestCase):
         )
         self.assertEqual(clc.__click_params__[0].hidden, True)
         self.assertEqual(clc.__click_params__[0].expose_value, False)
-        self.assertEqual(clc.__click_params__[0].callback.args, (None, None, None, toml_provider))
+        self.assertEqual(clc.__click_params__[0].callback.args, (None, None, None, config_provider))
 
     def test_get_ctx_defaults_non_nested(self):
         provider = MagicMock()

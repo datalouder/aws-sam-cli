@@ -9,7 +9,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError, NoCredentialsError, NoRegionError
 
-from samcli.commands.exceptions import CredentialsError, RegionError
+from samcli.commands.exceptions import AWSServiceClientError, RegionError
 from samcli.lib.bootstrap.companion_stack.companion_stack_builder import CompanionStackBuilder
 from samcli.lib.bootstrap.companion_stack.data_types import CompanionStack, ECRRepo
 from samcli.lib.package.artifact_exporter import mktempfile
@@ -17,6 +17,7 @@ from samcli.lib.package.s3_uploader import S3Uploader
 from samcli.lib.providers.sam_function_provider import SamFunctionProvider
 from samcli.lib.providers.sam_stack_provider import SamLocalStackProvider
 from samcli.lib.utils.packagetype import IMAGE
+from samcli.lib.utils.s3 import parse_s3_url
 
 # pylint: disable=E0401
 if typing.TYPE_CHECKING:  # pragma: no cover
@@ -58,7 +59,7 @@ class CompanionStackManager:
             self._account_id = boto3.client("sts").get_caller_identity().get("Account")
             self._region_name = self._cfn_client.meta.region_name
         except NoCredentialsError as ex:
-            raise CredentialsError(
+            raise AWSServiceClientError(
                 "Error Setting Up Managed Stack Client: Unable to resolve "
                 "credentials for the AWS SDK for Python client. "
                 "Please see their documentation for options to pass in credentials: "
@@ -112,7 +113,7 @@ class CompanionStackManager:
                 self._s3_client, bucket_name=self._s3_bucket, prefix=self._s3_prefix, no_progressbar=True
             )
             # TemplateUrl property requires S3 URL to be in path-style format
-            parts = S3Uploader.parse_s3_url(
+            parts = parse_s3_url(
                 s3_uploader.upload_with_dedup(temporary_file.name, "template"), version_property="Version"
             )
 

@@ -1,16 +1,16 @@
 #!/bin/sh
 binary_zip_filename=$1
 python_library_zip_filename=$2
-python_version=$3
-build_binary_name=$4
-build_folder=$5
+build_binary_name=$3
+build_folder=$4
+python_version=$5
 
 if [ "$python_library_zip_filename" = "" ]; then
     python_library_zip_filename="python-libraries.zip";
 fi
 
 if [ "$python_version" = "" ]; then
-    python_version="3.7.9";
+    python_version="3.11.3";
 fi
 
 if [ "$CI_OVERRIDE" = "1" ]; then
@@ -26,29 +26,48 @@ else
     is_nightly="false"
 fi
 
-set -eu
+set -eux
 
-yum install -y zlib-devel openssl-devel libffi-devel bzip2-devel
+yum install -y zlib-devel libffi-devel bzip2-devel
 
 echo "Making Folders"
 mkdir -p .build/src
 mkdir -p .build/output/aws-sam-cli-src
 mkdir -p .build/output/python-libraries
 mkdir -p .build/output/pyinstaller-output
-cd .build
+mkdir -p .build/output/openssl
+cd .build/output/openssl
+
+curl "https://www.openssl.org/source/openssl-1.1.1t.tar.gz" --output openssl-1.1.1.tar.gz
+tar xzf openssl-1.1.1.tar.gz
+cd openssl-1.1.1t
+./config --prefix=/opt/openssl && make && make install
+cd ../../..
 
 echo "Copying Source"
 cp -r ../[!.]* ./src
 cp -r ./src/* ./output/aws-sam-cli-src
 
-echo "Removing CI Scripts"
+echo "Removing CI Scripts and other files/direcories not needed"
 rm -vf ./output/aws-sam-cli-src/appveyor*.yml
+rm -rf ./output/aws-sam-cli-src/tests
+rm -rf ./output/aws-sam-cli-src/designs
+rm -rf ./output/aws-sam-cli-src/docs
+rm -rf ./output/aws-sam-cli-src/media
+rm -rf ./output/aws-sam-cli-src/Make.ps1
+rm -rf ./output/aws-sam-cli-src/CODEOWNERS
+rm -rf ./output/aws-sam-cli-src/CODE_OF_CONDUCT.md
+rm -rf ./output/aws-sam-cli-src/CONTRIBUTING.md
+rm -rf ./output/aws-sam-cli-src/DESIGN.md
+rm -rf ./output/aws-sam-cli-src/Makefile
+rm -rf ./output/aws-sam-cli-src/mypy.ini
+rm -rf ./output/aws-sam-cli-src/pytest.ini
 
 echo "Installing Python"
 curl "https://www.python.org/ftp/python/${python_version}/Python-${python_version}.tgz" --output python.tgz
 tar -xzf python.tgz
 cd Python-$python_version
-./configure --enable-shared
+./configure --enable-shared --with-openssl=/opt/openssl --with-openssl-rpath=auto 
 make -j8
 make install
 ldconfig
@@ -64,6 +83,7 @@ cp -r ./venv/lib/python*/site-packages/* ./output/python-libraries
 
 echo "Installing PyInstaller"
 ./venv/bin/pip install -r src/requirements/pyinstaller-build.txt
+./venv/bin/pip check
 
 echo "Building Binary"
 cd src
@@ -103,10 +123,7 @@ cp -r src/pyinstaller-output/* output/pyinstaller-output
 
 echo "Packaging Binary"
 yum install -y zip
-cd output
-cd pyinstaller-output
-cd dist
-cd ..
+cd output/pyinstaller-output/
 zip -r ../"$binary_zip_filename" ./*
 cd ..
 zip -r "$binary_zip_filename" aws-sam-cli-src

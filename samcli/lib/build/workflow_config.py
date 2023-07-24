@@ -89,6 +89,7 @@ def get_layer_subfolder(build_workflow: str) -> str:
         "python3.8": "python",
         "python3.9": "python",
         "python3.10": "python",
+        "python3.11": "python",
         "nodejs4.3": "nodejs",
         "nodejs6.10": "nodejs",
         "nodejs8.10": "nodejs",
@@ -97,9 +98,11 @@ def get_layer_subfolder(build_workflow: str) -> str:
         "nodejs16.x": "nodejs",
         "nodejs18.x": "nodejs",
         "ruby2.7": "ruby/lib",
+        "ruby3.2": "ruby/lib",
         "java8": "java",
         "java11": "java",
         "java8.al2": "java",
+        "java17": "java",
         "dotnet6": "dotnet",
         # User is responsible for creating subfolder in these workflows
         "makefile": "",
@@ -153,12 +156,13 @@ def get_workflow_config(
         "python3.8": BasicWorkflowSelector(PYTHON_PIP_CONFIG),
         "python3.9": BasicWorkflowSelector(PYTHON_PIP_CONFIG),
         "python3.10": BasicWorkflowSelector(PYTHON_PIP_CONFIG),
+        "python3.11": BasicWorkflowSelector(PYTHON_PIP_CONFIG),
         "nodejs12.x": BasicWorkflowSelector(NODEJS_NPM_CONFIG),
         "nodejs14.x": BasicWorkflowSelector(NODEJS_NPM_CONFIG),
         "nodejs16.x": BasicWorkflowSelector(NODEJS_NPM_CONFIG),
         "nodejs18.x": BasicWorkflowSelector(NODEJS_NPM_CONFIG),
         "ruby2.7": BasicWorkflowSelector(RUBY_BUNDLER_CONFIG),
-        "dotnetcore3.1": BasicWorkflowSelector(DOTNET_CLIPACKAGE_CONFIG),
+        "ruby3.2": BasicWorkflowSelector(RUBY_BUNDLER_CONFIG),
         "dotnet6": BasicWorkflowSelector(DOTNET_CLIPACKAGE_CONFIG),
         "go1.x": BasicWorkflowSelector(GO_MOD_CONFIG),
         # When Maven builder exists, add to this list so we can automatically choose a builder based on the supported
@@ -180,6 +184,14 @@ def get_workflow_config(
             ]
         ),
         "java8.al2": ManifestWorkflowSelector(
+            [
+                # Gradle builder needs custom executable paths to find `gradlew` binary
+                JAVA_GRADLE_CONFIG._replace(executable_search_paths=[code_dir, project_dir]),
+                JAVA_KOTLIN_GRADLE_CONFIG._replace(executable_search_paths=[code_dir, project_dir]),
+                JAVA_MAVEN_CONFIG,
+            ]
+        ),
+        "java17": ManifestWorkflowSelector(
             [
                 # Gradle builder needs custom executable paths to find `gradlew` binary
                 JAVA_GRADLE_CONFIG._replace(executable_search_paths=[code_dir, project_dir]),

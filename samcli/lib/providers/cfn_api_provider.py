@@ -115,7 +115,7 @@ class CfnApiProvider(CfnBaseApiProvider):
         rest_api_id = properties.get(LambdaAuthorizerV1Validator.AUTHORIZER_REST_API)
         name = properties.get(LambdaAuthorizerV1Validator.AUTHORIZER_NAME)
         authorizer_uri = properties.get(LambdaAuthorizerV1Validator.AUTHORIZER_AUTHORIZER_URI)
-        identity_source_template = properties.get(LambdaAuthorizerV1Validator.AUTHORIZER_IDENTITY_SOURCE, [])
+        identity_source_template = properties.get(LambdaAuthorizerV1Validator.AUTHORIZER_IDENTITY_SOURCE, "")
 
         # this will always return a string since we have already validated above
         function_name = cast(str, LambdaUri.get_function_name(authorizer_uri))
@@ -145,7 +145,7 @@ class CfnApiProvider(CfnBaseApiProvider):
             validation_string=validation_expression,
         )
 
-        collector.add_authorizers(rest_api_id, {name: lambda_authorizer})
+        collector.add_authorizers(rest_api_id, {logical_id: lambda_authorizer})
 
     @staticmethod
     def _extract_cfn_gateway_v2_authorizer(logical_id: str, resource: dict, collector: ApiCollector) -> None:
@@ -185,7 +185,7 @@ class CfnApiProvider(CfnBaseApiProvider):
             use_simple_response=simple_responses,
         )
 
-        collector.add_authorizers(api_id, {name: lambda_authorizer})
+        collector.add_authorizers(api_id, {logical_id: lambda_authorizer})
 
     @staticmethod
     def _extract_cloud_formation_route(
@@ -522,7 +522,7 @@ class CfnApiProvider(CfnBaseApiProvider):
         api_resource_type = resources.get(api_id, {}).get("Type")
         if api_resource_type != AWS_APIGATEWAY_V2_API:
             raise InvalidSamTemplateException(
-                "The AWS::ApiGatewayV2::Stag must have a valid ApiId that points to Api resource {}".format(api_id)
+                "The AWS::ApiGatewayV2::Stage must have a valid ApiId that points to Api resource {}".format(api_id)
             )
 
         collector.stage_name = stage_name

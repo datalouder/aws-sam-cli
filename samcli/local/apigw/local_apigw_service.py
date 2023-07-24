@@ -239,7 +239,7 @@ class LocalApigwService(BaseLocalService):
         Parameters
         ----------
         flask_request: Request
-            Flask request object to get method and endpoint
+            Flask request object to get method and path
         event_type: str
             Type of event (API or HTTP)
 
@@ -249,11 +249,11 @@ class LocalApigwService(BaseLocalService):
             A built method ARN with fake values
         """
         context = RequestContext() if event_type == Route.API else RequestContextV2()
-        method, endpoint = self.get_request_methods_endpoints(flask_request)
+        method, path = flask_request.method, flask_request.path
 
         return (
             f"arn:aws:execute-api:us-east-1:{context.account_id}:"  # type: ignore
-            f"{context.api_id}/{self.api.stage_name}/{method}{endpoint}"
+            f"{context.api_id}/{self.api.stage_name}/{method}{path}"
         )
 
     def _generate_lambda_token_authorizer_event(
@@ -265,7 +265,7 @@ class LocalApigwService(BaseLocalService):
         Parameters
         ----------
         flask_request: Request
-            Flask request object to get method and endpoint
+            Flask request object to get method and path
         route: Route
             Route object representing the endpoint to be invoked later
         lambda_authorizer: LambdaAuthorizer
@@ -339,7 +339,7 @@ class LocalApigwService(BaseLocalService):
         Parameters
         ----------
         flask_request: Request
-            Flask request object to get method and endpoint
+            Flask request object to get method and path
         route: Route
             Route object representing the endpoint to be invoked later
         lambda_authorizer: LambdaAuthorizer
@@ -546,12 +546,14 @@ class LocalApigwService(BaseLocalService):
 
         return context.to_dict()
 
-    def _valid_identity_sources(self, route: Route) -> bool:
+    def _valid_identity_sources(self, request: Request, route: Route) -> bool:
         """
         Validates if the route contains all the valid identity sources defined in the route's Lambda Authorizer
 
         Parameters
         ----------
+        request: Request
+            Flask request object containing incoming request variables
         route: Route
             the Route object that contains the Lambda Authorizer definition
 
@@ -654,7 +656,7 @@ class LocalApigwService(BaseLocalService):
             return self.service_response("", headers, 200)
 
         # check for LambdaAuthorizer since that is the only authorizer we currently support
-        if isinstance(lambda_authorizer, LambdaAuthorizer) and not self._valid_identity_sources(route):
+        if isinstance(lambda_authorizer, LambdaAuthorizer) and not self._valid_identity_sources(request, route):
             return ServiceErrorResponses.missing_lambda_auth_identity_sources()
 
         try:
@@ -679,6 +681,17 @@ class LocalApigwService(BaseLocalService):
         except InvalidLambdaAuthorizerResponse as ex:
             auth_service_error = ServiceErrorResponses.lambda_failure_response()
             lambda_authorizer_exception = ex
+        except FunctionNotFound as ex:
+            lambda_authorizer_exception = ex
+
+            LOG.warning(
+                "Failed to find a Function to invoke a Lambda authorizer, verify that "
+                "this Function is defined and exists locally in the template."
+            )
+        except Exception as ex:
+            # re-raise the catch all exception after we track it in our telemetry
+            lambda_authorizer_exception = ex
+            raise ex
         finally:
             exception_name = type(lambda_authorizer_exception).__name__ if lambda_authorizer_exception else None
 
@@ -690,8 +703,9 @@ class LocalApigwService(BaseLocalService):
             )
 
             if lambda_authorizer_exception:
-                LOG.error("Lambda authorizer failed to invoke successfully: %s", lambda_authorizer_exception.message)
+                LOG.error("Lambda authorizer failed to invoke successfully: %s", exception_name)
 
+            if auth_service_error:
                 return auth_service_error
 
         endpoint_service_error = None

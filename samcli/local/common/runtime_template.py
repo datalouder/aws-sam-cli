@@ -16,7 +16,7 @@ _lambda_images_templates = os.path.join(_init_path, "lib", "init", "image_templa
 RUNTIME_DEP_TEMPLATE_MAPPING = {
     "python": [
         {
-            "runtimes": ["python3.10", "python3.9", "python3.8", "python3.7"],
+            "runtimes": ["python3.11", "python3.10", "python3.9", "python3.8", "python3.7"],
             "dependency_manager": "pip",
             "init_location": os.path.join(_templates, "cookiecutter-aws-sam-hello-python"),
             "build": True,
@@ -24,7 +24,7 @@ RUNTIME_DEP_TEMPLATE_MAPPING = {
     ],
     "ruby": [
         {
-            "runtimes": ["ruby2.7"],
+            "runtimes": ["ruby3.2", "ruby2.7"],
             "dependency_manager": "bundler",
             "init_location": os.path.join(_templates, "cookiecutter-aws-sam-hello-ruby"),
             "build": True,
@@ -40,7 +40,7 @@ RUNTIME_DEP_TEMPLATE_MAPPING = {
     ],
     "dotnet": [
         {
-            "runtimes": ["dotnet6", "dotnetcore3.1"],
+            "runtimes": ["dotnet6"],
             "dependency_manager": "cli-package",
             "init_location": os.path.join(_templates, "cookiecutter-aws-sam-hello-dotnet"),
             "build": True,
@@ -56,13 +56,13 @@ RUNTIME_DEP_TEMPLATE_MAPPING = {
     ],
     "java": [
         {
-            "runtimes": ["java11", "java8", "java8.al2"],
+            "runtimes": ["java11", "java8", "java8.al2", "java17"],
             "dependency_manager": "maven",
             "init_location": os.path.join(_templates, "cookiecutter-aws-sam-hello-java-maven"),
             "build": True,
         },
         {
-            "runtimes": ["java11", "java8", "java8.al2"],
+            "runtimes": ["java11", "java8", "java8.al2", "java17"],
             "dependency_manager": "gradle",
             "init_location": os.path.join(_templates, "cookiecutter-aws-sam-hello-java-gradle"),
             "build": True,
@@ -96,12 +96,11 @@ SUPPORTED_DEP_MANAGERS: List[str] = list(
 # When adding new Lambda runtimes, please update SAM_RUNTIME_TO_SCHEMAS_CODE_LANG_MAPPING
 # Runtimes are ordered in alphabetical fashion with reverse version order (latest versions first)
 INIT_RUNTIMES = [
-    # dotnetcore runtimes in descending order
+    # dotnet runtimes in descending order
     "dotnet6",
-    "dotnet5.0",
-    "dotnetcore3.1",
     "go1.x",
     # java runtimes in descending order
+    "java17",
     "java11",
     "java8.al2",
     "java8",
@@ -114,21 +113,22 @@ INIT_RUNTIMES = [
     "provided.al2",
     "provided",
     # python runtimes in descending order
+    "python3.11",
     "python3.10",
     "python3.9",
     "python3.8",
     "python3.7",
     # ruby runtimes in descending order
+    "ruby3.2",
     "ruby2.7",
 ]
 
 
 LAMBDA_IMAGES_RUNTIMES_MAP = {
     "dotnet6": "amazon/dotnet6-base",
-    "dotnet5.0": "amazon/dotnet5.0-base",
-    "dotnetcore3.1": "amazon/dotnetcore3.1-base",
     "go1.x": "amazon/go1.x-base",
     "go (provided.al2)": "amazon/go-provided.al2-base",
+    "java17": "amazon/java17-base",
     "java11": "amazon/java11-base",
     "java8.al2": "amazon/java8.al2-base",
     "java8": "amazon/java8-base",
@@ -136,10 +136,12 @@ LAMBDA_IMAGES_RUNTIMES_MAP = {
     "nodejs16.x": "amazon/nodejs16.x-base",
     "nodejs14.x": "amazon/nodejs14.x-base",
     "nodejs12.x": "amazon/nodejs12.x-base",
+    "python3.11": "amazon/python3.11-base",
     "python3.10": "amazon/python3.10-base",
     "python3.9": "amazon/python3.9-base",
     "python3.8": "amazon/python3.8-base",
     "python3.7": "amazon/python3.7-base",
+    "ruby3.2": "amazon/ruby3.2-base",
     "ruby2.7": "amazon/ruby2.7-base",
 }
 
@@ -151,11 +153,13 @@ SAM_RUNTIME_TO_SCHEMAS_CODE_LANG_MAPPING = {
     "java8": "Java8",
     "java8.al2": "Java8",
     "java11": "Java8",
+    "java17": "Java17",
     "python3.7": "Python36",
     "python3.8": "Python36",
     "python3.9": "Python36",
     "python3.10": "Python36",
-    "dotnet6": "dotnetcore3.1",
+    "python3.11": "Python36",
+    "dotnet6": "dotnet6",
     "go1.x": "Go1",
 }
 

@@ -16,6 +16,7 @@ from samcli.cli.types import (
     CfnTags,
     ImageRepositoriesType,
     ImageRepositoryType,
+    RemoteInvokeBotoApiParameterType,
     SigningProfilesOptionType,
 )
 from samcli.commands._utils.constants import (
@@ -127,6 +128,21 @@ def image_repositories_callback(ctx, param, provided_value):
         image_repositories.update(value)
 
     return image_repositories if image_repositories else None
+
+
+def remote_invoke_boto_parameter_callback(ctx, param, provided_value):
+    """
+    Create an dictionary of boto parameters to their provided values.
+    :param ctx: Click Context
+    :param param: Param name
+    :param provided_value: Value provided by Click, after being processed by RemoteInvokeBotoApiParameterType.
+    :return: dictionary of boto api parameters to their provided values. E.g. LogType=Tail for Lambda invoke API
+    """
+    boto_api_parameters = {}
+    for value in provided_value:
+        boto_api_parameters.update(value)
+
+    return boto_api_parameters
 
 
 def artifact_callback(ctx, param, provided_value, artifact):
@@ -310,7 +326,7 @@ def no_progressbar_click_option():
         default=False,
         required=False,
         is_flag=True,
-        help="Does not showcase a progress bar when uploading artifacts to s3 and pushing docker images to ECR",
+        help="Does not showcase a progress bar when uploading artifacts to S3 and pushing docker images to ECR",
     )
 
 
@@ -571,6 +587,27 @@ def image_repositories_option(f):
     return image_repositories_click_option()(f)
 
 
+def remote_invoke_parameter_click_option():
+    return click.option(
+        "--parameter",
+        multiple=True,
+        type=RemoteInvokeBotoApiParameterType(),
+        callback=remote_invoke_boto_parameter_callback,
+        required=False,
+        help="Additional parameters that can be passed to invoke the resource.\n"
+        "The following additional parameters can be used to invoke a lambda resource and get a buffered response: "
+        "InvocationType='Event'|'RequestResponse'|'DryRun', LogType='None'|'Tail', "
+        "ClientContext='base64-encoded string' Qualifier='string'. "
+        "The following additional parameters can be used to invoke a lambda resource with response streaming: "
+        "InvocationType='RequestResponse'|'DryRun', LogType='None'|'Tail', "
+        "ClientContext='base64-encoded string', Qualifier='string'.",
+    )
+
+
+def remote_invoke_parameter_option(f):
+    return remote_invoke_parameter_click_option()(f)
+
+
 def s3_prefix_click_option():
     return click.option(
         "--s3-prefix",
@@ -642,9 +679,9 @@ def resolve_s3_click_option(guided):
         required=False,
         is_flag=True,
         callback=callback,
-        help="Automatically resolve s3 bucket for non-guided deployments. "
-        "Enabling this option will also create a managed default s3 bucket for you. "
-        "If you do not provide a --s3-bucket value, the managed bucket will be used. "
+        help="Automatically resolve AWS S3 bucket for non-guided deployments. "
+        "Enabling this option will also create a managed default AWS S3 bucket for you. "
+        "If one does not provide a --s3-bucket value, the managed bucket will be used. "
         "Do not use --guided with this option.",
     )
 
@@ -757,6 +794,29 @@ def use_container_build_click_option():
 
 def use_container_build_option(f):
     return use_container_build_click_option()(f)
+
+
+def build_image_click_option(cls):
+    return click.option(
+        "--build-image",
+        "-bi",
+        default=None,
+        multiple=True,  # Can pass in multiple build images
+        required=False,
+        help="Container image URIs for building functions/layers. "
+        "You can specify for all functions/layers with just the image URI "
+        "(--build-image public.ecr.aws/sam/build-nodejs18.x:latest). "
+        "You can specify for each individual function with "
+        "(--build-image FunctionLogicalID=public.ecr.aws/sam/build-nodejs18.x:latest). "
+        "A combination of the two can be used. If a function does not have build image specified or "
+        "an image URI for all functions, the default SAM CLI build images will be used.",
+        cls=cls,
+    )
+
+
+@parameterized_option
+def build_image_option(f, cls):
+    return build_image_click_option(cls)(f)
 
 
 def _space_separated_list_func_type(value):

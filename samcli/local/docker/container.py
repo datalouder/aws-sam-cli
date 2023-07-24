@@ -15,12 +15,12 @@ import docker
 import requests
 from docker.errors import NotFound as DockerNetworkNotFound
 
+from samcli.lib.constants import DOCKER_MIN_API_VERSION
 from samcli.lib.utils.retry import retry
 from samcli.lib.utils.tar import extract_tarfile
 from samcli.local.docker.effective_user import ROOT_USER_ID, EffectiveUser
-
-from .exceptions import ContainerNotStartableException
-from .utils import NoFreePortsError, find_free_port, to_posix_path
+from samcli.local.docker.exceptions import ContainerNotStartableException, PortAlreadyInUse
+from samcli.local.docker.utils import NoFreePortsError, find_free_port, to_posix_path
 
 LOG = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class Container:
         self._logs_thread = None
 
         # Use the given Docker client or create new one
-        self.docker_client = docker_client or docker.from_env()
+        self.docker_client = docker_client or docker.from_env(version=DOCKER_MIN_API_VERSION)
 
         # Runtime properties of the container. They won't have value until container is created or started
         self.id = None
@@ -205,9 +205,6 @@ class Container:
         if self._memory_limit_mb:
             # Ex: 128m => 128MB
             kwargs["mem_limit"] = "{}m".format(self._memory_limit_mb)
-
-        if self.network_id == "host":
-            kwargs["network_mode"] = self.network_id
 
         real_container = self.docker_client.containers.create(self._image, **kwargs)
         self.id = real_container.id
@@ -312,8 +309,13 @@ class Container:
         # Get the underlying container instance from Docker API
         real_container = self.docker_client.containers.get(self.id)
 
-        # Start the container
-        real_container.start()
+        try:
+            # Start the container
+            real_container.start()
+        except docker.errors.APIError as ex:
+            if "Ports are not available" in str(ex):
+                raise PortAlreadyInUse(ex.explanation.decode()) from ex
+            raise ex
 
     @retry(exc=requests.exceptions.RequestException, exc_raise=ContainerResponseException)
     def wait_for_http_response(self, name, event, stdout):

@@ -13,8 +13,12 @@ from typing import Optional
 
 import docker
 
-from samcli.commands.local.cli_common.user_exceptions import ImageBuildException
+from samcli.commands.local.cli_common.user_exceptions import (
+    DockerDistributionAPIError,
+    ImageBuildException,
+)
 from samcli.commands.local.lib.exceptions import InvalidIntermediateImageError
+from samcli.lib.constants import DOCKER_MIN_API_VERSION
 from samcli.lib.utils.architecture import has_runtime_multi_arch_image
 from samcli.lib.utils.packagetype import IMAGE, ZIP
 from samcli.lib.utils.stream_writer import StreamWriter
@@ -35,12 +39,14 @@ class Runtime(Enum):
     python38 = "python3.8"
     python39 = "python3.9"
     python310 = "python3.10"
+    python311 = "python3.11"
     ruby27 = "ruby2.7"
+    ruby32 = "ruby3.2"
     java8 = "java8"
     java8al2 = "java8.al2"
     java11 = "java11"
+    java17 = "java17"
     go1x = "go1.x"
-    dotnetcore31 = "dotnetcore3.1"
     dotnet6 = "dotnet6"
     provided = "provided"
     providedal2 = "provided.al2"
@@ -80,7 +86,7 @@ class Runtime(Enum):
             # `provided.al2` becomes `provided:al2``
             runtime_image_tag = runtime.replace(".", ":")
         elif runtime.startswith("dotnet"):
-            # dotnetcore3.1 becomes dotnet:core3.1 and dotnet6 becomes dotnet:6
+            # dotnet6 becomes dotnet:6
             runtime_image_tag = runtime.replace("dotnet", "dotnet:")
         else:
             # This fits most runtimes format: `nameN.M` becomes `name:N.M` (python3.9 -> python:3.9)
@@ -118,7 +124,7 @@ class LambdaImage:
         self.layer_downloader = layer_downloader
         self.skip_pull_image = skip_pull_image
         self.force_image_build = force_image_build
-        self.docker_client = docker_client or docker.from_env()
+        self.docker_client = docker_client or docker.from_env(version=DOCKER_MIN_API_VERSION)
         self.invoke_images = invoke_images
 
     def build(self, runtime, packagetype, image, layers, architecture, stream=None, function_name=None):
@@ -191,6 +197,20 @@ class LambdaImage:
         except docker.errors.ImageNotFound:
             LOG.info("Local image was not found.")
             image_not_found = True
+        except docker.errors.APIError as e:
+            if e.__class__ is docker.errors.NotFound:
+                # A generic "NotFound" is raised when we aren't able to check the image version
+                # for example when the docker daemon's api doesn't support this action.
+                #
+                # See Also: https://github.com/containers/podman/issues/17726
+                LOG.warning(
+                    "Unknown 404 - Unable to check if base image is current.\n\nPossible incompatible "
+                    "Docker engine clone employed. Consider `--skip-pull-image` for improved speed, the "
+                    "tradeoff being not running the latest image."
+                )
+                image_not_found = True
+            else:
+                raise DockerDistributionAPIError("Unknown API error received from docker") from e
 
         # If building a new rapid image, delete older rapid images
         if image_not_found and rapid_image == f"{image_repo}:{tag_prefix}{RAPID_IMAGE_TAG_PREFIX}-{architecture}":

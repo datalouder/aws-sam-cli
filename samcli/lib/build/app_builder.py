@@ -14,6 +14,7 @@ from aws_lambda_builders import (
 )
 from aws_lambda_builders.builder import LambdaBuilder
 from aws_lambda_builders.exceptions import LambdaBuilderError
+from samcli.lib.constants import DOCKER_MIN_API_VERSION
 from samcli.lib.build.build_graph import FunctionBuildDefinition, LayerBuildDefinition, BuildGraph
 from samcli.lib.build.build_strategy import (
     DefaultBuildStrategy,
@@ -35,7 +36,7 @@ from samcli.lib.utils.resources import (
 from samcli.lib.samlib.resource_metadata_normalizer import ResourceMetadataNormalizer
 from samcli.lib.docker.log_streamer import LogStreamer, LogStreamError
 from samcli.lib.providers.provider import ResourcesToBuildCollector, get_full_path, Stack
-from samcli.lib.utils.colors import Colored
+from samcli.lib.utils.colors import Colored, Colors
 from samcli.lib.utils import osutils
 from samcli.lib.utils.packagetype import IMAGE, ZIP
 from samcli.lib.utils.stream_writer import StreamWriter
@@ -156,7 +157,7 @@ class ApplicationBuilder:
         self._parallel = parallel
         self._mode = mode
         self._stream_writer = stream_writer if stream_writer else StreamWriter(stream=osutils.stderr(), auto_flush=True)
-        self._docker_client = docker_client if docker_client else docker.from_env()
+        self._docker_client = docker_client if docker_client else docker.from_env(version=DOCKER_MIN_API_VERSION)
 
         self._deprecated_runtimes = DEPRECATED_RUNTIMES
         self._colored = Colored()
@@ -403,17 +404,21 @@ class ApplicationBuilder:
 
         build_args = {
             "path": str(docker_context_dir),
-            "dockerfile": dockerfile,
+            "dockerfile": str(pathlib.Path(dockerfile).as_posix()),
             "tag": docker_tag,
             "buildargs": docker_build_args,
-            "decode": True,
             "platform": get_docker_platform(architecture),
             "rm": True,
         }
         if docker_build_target:
             build_args["target"] = cast(str, docker_build_target)
 
-        build_logs = self._docker_client.api.build(**build_args)
+        try:
+            (build_image, build_logs) = self._docker_client.images.build(**build_args)
+            LOG.debug("%s image is built for %s function", build_image, function_name)
+        except docker.errors.BuildError as ex:
+            LOG.error("Failed building function %s", function_name)
+            raise DockerBuildFailed(str(ex)) from ex
 
         # The Docker-py low level api will stream logs back but if an exception is raised by the api
         # this is raised when accessing the generator. So we need to wrap accessing build_logs in a try: except.
@@ -641,7 +646,7 @@ class ApplicationBuilder:
                     f"update to a newer supported runtime. For more information please check AWS Lambda Runtime "
                     f"Support Policy: https://docs.aws.amazon.com/lambda/latest/dg/runtime-support-policy.html"
                 )
-                LOG.warning(self._colored.yellow(message))
+                LOG.warning(self._colored.color_log(msg=message, color=Colors.WARNING), extra=dict(markup=True))
                 raise UnsupportedRuntimeException(f"Building functions with {runtime} is no longer supported")
 
             # Create the arguments to pass to the builder

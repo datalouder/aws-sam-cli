@@ -37,7 +37,8 @@ from samcli.commands.deploy.exceptions import (
 from samcli.lib.deploy.utils import DeployColor, FailureMode
 from samcli.lib.package.local_files_utils import get_uploaded_s3_object_name, mktempfile
 from samcli.lib.package.s3_uploader import S3Uploader
-from samcli.lib.utils.colors import Colored
+from samcli.lib.utils.colors import Colored, Colors
+from samcli.lib.utils.s3 import parse_s3_url
 from samcli.lib.utils.time import utc_to_timestamp
 
 LOG = logging.getLogger(__name__)
@@ -203,9 +204,7 @@ class Deployer:
                 temporary_file.flush()
                 remote_path = get_uploaded_s3_object_name(file_path=temporary_file.name, extension="template")
                 # TemplateUrl property requires S3 URL to be in path-style format
-                parts = S3Uploader.parse_s3_url(
-                    s3_uploader.upload(temporary_file.name, remote_path), version_property="Version"
-                )
+                parts = parse_s3_url(s3_uploader.upload(temporary_file.name, remote_path), version_property="Version")
                 kwargs["TemplateURL"] = s3_uploader.to_path_style_s3_url(parts["Key"], parts.get("Version", None))
 
         # don't set these arguments if not specified to use existing values
@@ -510,7 +509,7 @@ class Deployer:
             if disable_rollback and on_failure is not FailureMode.DELETE:
                 # This will only display the message if disable rollback is set or if DO_NOTHING is specified
                 msg = self._gen_deploy_failed_with_rollback_disabled_msg(stack_name)
-                LOG.info(self._colored.red(msg))
+                LOG.info(self._colored.color_log(msg=msg, color=Colors.FAILURE), extra=dict(markup=True))
 
             raise deploy_exceptions.DeployFailedError(stack_name=stack_name, msg=str(ex))
 
@@ -624,7 +623,7 @@ class Deployer:
             msg = ""
 
             if exists:
-                kwargs["DisableRollback"] = disable_rollback
+                kwargs["DisableRollback"] = disable_rollback  # type: ignore
 
                 result = self.update_stack(**kwargs)
                 self.wait_for_execute(stack_name, "UPDATE", disable_rollback, on_failure=on_failure)
@@ -637,7 +636,7 @@ class Deployer:
                 self.wait_for_execute(stack_name, "CREATE", disable_rollback, on_failure=on_failure)
                 msg = "\nStack creation succeeded. Sync infra completed.\n"
 
-            LOG.info(self._colored.green(msg))
+            LOG.info(self._colored.color_log(msg=msg, color=Colors.SUCCESS), extra=dict(markup=True))
 
             return result
         except botocore.exceptions.ClientError as ex:
@@ -661,7 +660,7 @@ class Deployer:
                     format_string=OUTPUTS_FORMAT_STRING,
                     format_args=kwargs["format_args"],
                     columns_dict=OUTPUTS_DEFAULTS_ARGS.copy(),
-                    color="green",
+                    color=Colors.SUCCESS,
                     replace_whitespace=False,
                     break_long_words=False,
                     drop_whitespace=False,

@@ -3,6 +3,7 @@ Sync Command Options related Datastructures for formatting.
 """
 from typing import Dict, List
 
+from samcli.cli.core.options import ALL_COMMON_OPTIONS, add_common_options_info
 from samcli.cli.row_modifiers import RowDefinition
 
 # NOTE(sriram-mv): The ordering of the option lists matter, they are the order
@@ -24,6 +25,7 @@ INFRASTRUCTURE_OPTION_NAMES: List[str] = [
     "notification_arns",
     "tags",
     "metadata",
+    "build_image",
 ]
 
 CONFIGURATION_OPTION_NAMES: List[str] = ["config_env", "config_file"]
@@ -46,7 +48,7 @@ ALL_OPTIONS: List[str] = (
     + INFRASTRUCTURE_OPTION_NAMES
     + CONFIGURATION_OPTION_NAMES
     + ADDITIONAL_OPTIONS
-    + OTHER_OPTIONS
+    + ALL_COMMON_OPTIONS
 )
 
 OPTIONS_INFO: Dict[str, Dict] = {
@@ -68,5 +70,5 @@ OPTIONS_INFO: Dict[str, Dict] = {
         ],
     },
     "Additional Options": {"option_names": {opt: {"rank": idx} for idx, opt in enumerate(ADDITIONAL_OPTIONS)}},
-    "Other Options": {"option_names": {opt: {"rank": idx} for idx, opt in enumerate(OTHER_OPTIONS)}},
 }
+add_common_options_info(OPTIONS_INFO)
