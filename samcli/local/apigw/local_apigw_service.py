@@ -4,7 +4,7 @@ import base64
 import json
 import logging
 from datetime import datetime
-from io import BytesIO
+from io import StringIO
 from time import time
 from typing import Any, Dict, List, Optional
 
@@ -605,12 +605,14 @@ class LocalApigwService(BaseLocalService):
         str
             A string containing the output from the Lambda function
         """
-        with BytesIO() as stdout:
+        with StringIO() as stdout:
             event_str = json.dumps(event, sort_keys=True)
             stdout_writer = StreamWriter(stdout, auto_flush=True)
 
             self.lambda_runner.invoke(lambda_function_name, event_str, stdout=stdout_writer, stderr=self.stderr)
-            lambda_response, _ = LambdaOutputParser.get_lambda_output(stdout)
+            lambda_response, is_lambda_user_error_response = LambdaOutputParser.get_lambda_output(stdout)
+            if is_lambda_user_error_response:
+                raise LambdaResponseParseException
 
         return lambda_response
 
@@ -639,7 +641,10 @@ class LocalApigwService(BaseLocalService):
         """
 
         route: Route = self._get_current_route(request)
-        cors_headers = Cors.cors_to_headers(self.api.cors)
+
+        request_origin = request.headers.get("Origin")
+        cors_headers = Cors.cors_to_headers(self.api.cors, request_origin, route.event_type)
+
         lambda_authorizer = route.authorizer_object
 
         # payloadFormatVersion can only support 2 values: "1.0" and "2.0"
@@ -669,8 +674,8 @@ class LocalApigwService(BaseLocalService):
             LOG.error("UnicodeDecodeError while processing HTTP request: %s", error)
             return ServiceErrorResponses.lambda_failure_response()
 
+        lambda_authorizer_exception = None
         try:
-            lambda_authorizer_exception = None
             auth_service_error = None
 
             if lambda_authorizer:
@@ -703,7 +708,7 @@ class LocalApigwService(BaseLocalService):
             )
 
             if lambda_authorizer_exception:
-                LOG.error("Lambda authorizer failed to invoke successfully: %s", exception_name)
+                LOG.error("Lambda authorizer failed to invoke successfully: %s", str(lambda_authorizer_exception))
 
             if auth_service_error:
                 return auth_service_error
@@ -718,6 +723,8 @@ class LocalApigwService(BaseLocalService):
             endpoint_service_error = ServiceErrorResponses.not_implemented_locally(
                 "Inline code is not supported for sam local commands. Please write your code in a separate file."
             )
+        except LambdaResponseParseException:
+            endpoint_service_error = ServiceErrorResponses.lambda_body_failure_response()
 
         if endpoint_service_error:
             return endpoint_service_error
@@ -736,6 +743,9 @@ class LocalApigwService(BaseLocalService):
         except LambdaResponseParseException as ex:
             LOG.error("Invalid lambda response received: %s", ex)
             return ServiceErrorResponses.lambda_failure_response()
+
+        # Add CORS headers to the response
+        headers.update(cors_headers)
 
         return self.service_response(body, headers, status_code)
 

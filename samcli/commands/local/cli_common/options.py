@@ -166,7 +166,8 @@ def invoke_common_options(f):
             click.option(
                 "--container-env-vars",
                 type=click.Path(exists=True),
-                help="JSON file containing environment variables to be set within the container environment",
+                help="JSON file containing additional environment variables to be set within the container when "
+                "used in a debugging session locally.",
             ),
             click.option(
                 "--docker-volume-basedir",
@@ -231,7 +232,7 @@ def warm_containers_common_options(f):
         click.option(
             "--debug-function",
             help="Optional. Specifies the Lambda Function logicalId to apply debug options to when"
-            " --warm-containers is specified.  This parameter applies to --debug-port, --debugger-path,"
+            " --warm-containers is specified. This parameter applies to --debug-port, --debugger-path,"
             " and --debug-args.",
             type=click.STRING,
             multiple=False,

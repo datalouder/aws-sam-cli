@@ -4,7 +4,7 @@ from io import TextIOWrapper
 
 import click
 
-from samcli.cli.cli_config_file import ConfigProvider, configuration_option
+from samcli.cli.cli_config_file import ConfigProvider, configuration_option, save_params_option
 from samcli.cli.context import Context
 from samcli.cli.main import aws_creds_options, common_options, pass_context, print_cmdline_args
 from samcli.cli.types import RemoteInvokeOutputFormatType
@@ -68,6 +68,7 @@ DESCRIPTION = """
 @event_and_event_file_options_validation
 @common_options
 @aws_creds_options
+@save_params_option
 @pass_context
 @track_command
 @check_newer_version
@@ -81,6 +82,7 @@ def cli(
     event_file: TextIOWrapper,
     output: RemoteInvokeOutputFormat,
     parameter: dict,
+    save_params: bool,
     config_file: str,
     config_env: str,
 ) -> None:
@@ -117,6 +119,12 @@ def do_cli(
     """
     Implementation of the ``cli`` method
     """
+    from botocore.exceptions import (
+        NoCredentialsError,
+        NoRegionError,
+        ProfileNotFound,
+    )
+
     from samcli.commands.exceptions import UserException
     from samcli.commands.remote.remote_invoke_context import RemoteInvokeContext
     from samcli.lib.remote_invoke.exceptions import (
@@ -127,20 +135,26 @@ def do_cli(
     from samcli.lib.remote_invoke.remote_invoke_executors import RemoteInvokeExecutionInfo
     from samcli.lib.utils.boto_utils import get_boto_client_provider_with_config, get_boto_resource_provider_with_config
 
-    boto_client_provider = get_boto_client_provider_with_config(region_name=region)
-    boto_resource_provider = get_boto_resource_provider_with_config(region_name=region)
     try:
+        boto_client_provider = get_boto_client_provider_with_config(region_name=region, profile=profile)
+        boto_resource_provider = get_boto_resource_provider_with_config(region_name=region, profile=profile)
         with RemoteInvokeContext(
             boto_client_provider=boto_client_provider,
             boto_resource_provider=boto_resource_provider,
             stack_name=stack_name,
             resource_id=resource_id,
         ) as remote_invoke_context:
-
             remote_invoke_input = RemoteInvokeExecutionInfo(
                 payload=event, payload_file=event_file, parameters=parameter, output_format=output
             )
 
             remote_invoke_context.run(remote_invoke_input=remote_invoke_input)
-    except (ErrorBotoApiCallException, InvalideBotoResponseException, InvalidResourceBotoParameterException) as ex:
+    except (
+        ErrorBotoApiCallException,
+        InvalideBotoResponseException,
+        InvalidResourceBotoParameterException,
+        ProfileNotFound,
+        NoCredentialsError,
+        NoRegionError,
+    ) as ex:
         raise UserException(str(ex), wrapped_from=ex.__class__.__name__) from ex

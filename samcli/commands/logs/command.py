@@ -6,7 +6,7 @@ import logging
 
 import click
 
-from samcli.cli.cli_config_file import ConfigProvider, configuration_option
+from samcli.cli.cli_config_file import ConfigProvider, configuration_option, save_params_option
 from samcli.cli.main import aws_creds_options, pass_context, print_cmdline_args
 from samcli.cli.main import common_options as cli_framework_options
 from samcli.commands._utils.command_exception_handler import command_exception_handler
@@ -72,6 +72,14 @@ DESCRIPTION = """
     "https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html",
 )
 @click.option(
+    "--tail",
+    "-t",
+    is_flag=True,
+    help="Tail events. This will ignore the end time argument and continue to fetch events as they "
+    "become available. If option --tail is provided without a --name, one will be pulled from all "
+    "possible resources",
+)
+@click.option(
     "--include-traces",
     "-i",
     is_flag=True,
@@ -87,6 +95,7 @@ DESCRIPTION = """
 @common_observability_options
 @cli_framework_options
 @aws_creds_options
+@save_params_option
 @pass_context
 @track_command
 @check_newer_version
@@ -104,6 +113,7 @@ def cli(
     end_time,
     output,
     cw_log_group,
+    save_params,
     config_file,
     config_env,
 ):  # pylint: disable=redefined-builtin

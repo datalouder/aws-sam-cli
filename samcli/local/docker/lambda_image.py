@@ -3,6 +3,7 @@ Generates a Docker Image to be used for invoking a function locally
 """
 import hashlib
 import logging
+import os
 import platform
 import re
 import sys
@@ -168,6 +169,11 @@ class LambdaImage:
                 tag_prefix = f"{runtime_only_number}-"
                 base_image = f"{self._INVOKE_REPO_PREFIX}/{runtime_image_tag}"
 
+                # Temporarily add a version tag to the emulation image so that we don't pull a broken image
+                if platform.system().lower() == "windows" and runtime in [Runtime.go1x.value, Runtime.java8.value]:
+                    LOG.info("Falling back to a previous version of the emulation image")
+                    base_image = f"{base_image}.2023.08.02.10"
+
         if not base_image:
             raise InvalidIntermediateImageError(f"Invalid PackageType, PackageType needs to be one of [{ZIP}, {IMAGE}]")
 
@@ -210,7 +216,7 @@ class LambdaImage:
                 )
                 image_not_found = True
             else:
-                raise DockerDistributionAPIError("Unknown API error received from docker") from e
+                raise DockerDistributionAPIError(str(e)) from e
 
         # If building a new rapid image, delete older rapid images
         if image_not_found and rapid_image == f"{image_repo}:{tag_prefix}{RAPID_IMAGE_TAG_PREFIX}-{architecture}":
@@ -227,7 +233,7 @@ class LambdaImage:
             or not runtime
         ):
             stream_writer = stream or StreamWriter(sys.stderr)
-            stream_writer.write("Building image...")
+            stream_writer.write_str("Building image...")
             stream_writer.flush()
             self._build_image(
                 image if image else base_image, rapid_image, downloaded_layers, architecture, stream=stream_writer
@@ -338,15 +344,15 @@ class LambdaImage:
                         platform=get_docker_platform(architecture),
                     )
                     for log in resp_stream:
-                        stream_writer.write(".")
+                        stream_writer.write_str(".")
                         stream_writer.flush()
                         if "error" in log:
-                            stream_writer.write("\n")
+                            stream_writer.write_str(os.linesep)
                             LOG.exception("Failed to build Docker Image")
                             raise ImageBuildException("Error building docker image: {}".format(log["error"]))
-                    stream_writer.write("\n")
+                    stream_writer.write_str(os.linesep)
                 except (docker.errors.BuildError, docker.errors.APIError) as ex:
-                    stream_writer.write("\n")
+                    stream_writer.write_str(os.linesep)
                     LOG.exception("Failed to build Docker Image")
                     raise ImageBuildException("Building Image failed.") from ex
         finally:
@@ -526,8 +532,8 @@ class LambdaImage:
             Image digest, including `sha256:` prefix
         """
         image_info = self.docker_client.images.get(image_name)
-        full_digest: str = image_info.attrs.get("RepoDigests", [None])[0]
         try:
+            full_digest: str = image_info.attrs.get("RepoDigests", [None])[0]
             return full_digest.split("@")[1]
         except (AttributeError, IndexError):
             return None
