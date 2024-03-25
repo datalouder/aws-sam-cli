@@ -1,6 +1,7 @@
 """
 Keeps list of hidden/dynamic imports that is being used in SAM CLI, so that pyinstaller can include these packages
 """
+
 import pkgutil
 from types import ModuleType
 
@@ -32,4 +33,5 @@ SAM_CLI_HIDDEN_IMPORTS = list(samcli_modules) + [
     "dateparser",
     "jsonschema",
     "cfnlint",
+    "networkx.generators",
 ]

@@ -7,7 +7,7 @@ import uuid
 import logging
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 from unittest import skipIf
 
 import pytest
@@ -55,6 +55,7 @@ LOG.addHandler(handler)
 class TestSyncWatchBase(SyncIntegBase):
     template_before = ""
     parameter_overrides: Dict[str, str] = {}
+    watch_exclude: List[str] = []
 
     def setUp(self):
         # set up clean testing folder
@@ -161,6 +162,7 @@ class TestSyncWatchEsbuildBase(TestSyncWatchBase):
             s3_prefix=self.s3_prefix,
             kms_key_id=self.kms_key,
             tags="integ=true clarity=yes foo_bar=baz",
+            watch_exclude=self.watch_exclude,
         )
         self.watch_process = start_persistent_process(sync_command_list, cwd=self.test_data_path)
 
@@ -221,7 +223,7 @@ class TestSyncWatchCode(TestSyncWatchBase):
             )
             read_until_string(
                 self.watch_process,
-                "\x1b[32mFinished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
+                "Finished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
                 timeout=45,
             )
             layer_contents = self.get_dependency_layer_contents_from_arn(self.stack_resources, "python", 2)
@@ -233,7 +235,7 @@ class TestSyncWatchCode(TestSyncWatchBase):
             self.test_data_path.joinpath("code", "before", "function", "app.py"),
         )
         read_until_string(
-            self.watch_process, "\x1b[32mFinished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=30
+            self.watch_process, "Finished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=30
         )
         lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
         for lambda_function in lambda_functions:
@@ -248,7 +250,7 @@ class TestSyncWatchCode(TestSyncWatchBase):
         )
         read_until_string(
             self.watch_process,
-            "\x1b[32mFinished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
+            "Finished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
             timeout=30,
         )
         lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
@@ -262,7 +264,7 @@ class TestSyncWatchCode(TestSyncWatchBase):
             self.test_data_path.joinpath("code", "after", "apigateway", "definition.json"),
             self.test_data_path.joinpath("code", "before", "apigateway", "definition.json"),
         )
-        read_until_string(self.watch_process, "\x1b[32mFinished syncing RestApi HelloWorldApi.\x1b[0m\n", timeout=20)
+        read_until_string(self.watch_process, "Finished syncing RestApi HelloWorldApi.\x1b[0m\n", timeout=20)
         time.sleep(API_SLEEP)
         rest_api = self.stack_resources.get(AWS_APIGATEWAY_RESTAPI)[0]
         self.assertEqual(self._get_api_message(rest_api), '{"message": "hello 2"}')
@@ -272,9 +274,7 @@ class TestSyncWatchCode(TestSyncWatchBase):
             self.test_data_path.joinpath("code", "after", "statemachine", "function.asl.json"),
             self.test_data_path.joinpath("code", "before", "statemachine", "function.asl.json"),
         )
-        read_until_string(
-            self.watch_process, "\x1b[32mFinished syncing StepFunctions HelloStepFunction.\x1b[0m\n", timeout=20
-        )
+        read_until_string(self.watch_process, "Finished syncing StepFunctions HelloStepFunction.\x1b[0m\n", timeout=20)
         state_machine = self.stack_resources.get(AWS_STEPFUNCTIONS_STATEMACHINE)[0]
         time.sleep(SFN_SLEEP)
         self.assertEqual(self._get_sfn_response(state_machine), '"World 2"')
@@ -324,8 +324,7 @@ class TestSyncCodeWatchNestedStacks(TestSyncWatchBase):
             )
             read_until_string(
                 self.watch_process,
-                "\x1b[32mFinished syncing Function Layer Reference Sync "
-                "LocalNestedChildStack/HelloWorldFunction.\x1b[0m\n",
+                "Finished syncing Function Layer Reference Sync " "LocalNestedChildStack/HelloWorldFunction.\x1b[0m\n",
                 timeout=45,
             )
             layer_contents = self.get_dependency_layer_contents_from_arn(self.stack_resources, "python", 2)
@@ -338,7 +337,7 @@ class TestSyncCodeWatchNestedStacks(TestSyncWatchBase):
         )
         read_until_string(
             self.watch_process,
-            "\x1b[32mFinished syncing Lambda Function LocalNestedChildStack/HelloWorldFunction.\x1b[0m\n",
+            "Finished syncing Lambda Function LocalNestedChildStack/HelloWorldFunction.\x1b[0m\n",
             timeout=30,
         )
         lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
@@ -354,7 +353,7 @@ class TestSyncCodeWatchNestedStacks(TestSyncWatchBase):
         )
         read_until_string(
             self.watch_process,
-            "\x1b[32mFinished syncing Function Layer Reference Sync LocalNestedChildStack/HelloWorldFunction.\x1b[0m\n",
+            "Finished syncing Function Layer Reference Sync LocalNestedChildStack/HelloWorldFunction.\x1b[0m\n",
             timeout=30,
         )
         lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
@@ -370,7 +369,7 @@ class TestSyncCodeWatchNestedStacks(TestSyncWatchBase):
         )
         read_until_string(
             self.watch_process,
-            "\x1b[32mFinished syncing RestApi LocalNestedChildStack/HelloWorldApi.\x1b[0m\n",
+            "Finished syncing RestApi LocalNestedChildStack/HelloWorldApi.\x1b[0m\n",
             timeout=20,
         )
         time.sleep(API_SLEEP)
@@ -384,7 +383,7 @@ class TestSyncCodeWatchNestedStacks(TestSyncWatchBase):
         )
         read_until_string(
             self.watch_process,
-            "\x1b[32mFinished syncing StepFunctions LocalNestedChildStack/HelloStepFunction.\x1b[0m\n",
+            "Finished syncing StepFunctions LocalNestedChildStack/HelloStepFunction.\x1b[0m\n",
             timeout=20,
         )
         state_machine = self.stack_resources.get(AWS_STEPFUNCTIONS_STATEMACHINE)[0]
@@ -411,7 +410,7 @@ class TestSyncWatchCodeEsbuild(TestSyncWatchEsbuildBase):
             self.test_data_path.joinpath("code", "before", "esbuild_function", "app.ts"),
         )
         read_until_string(
-            self.watch_process, "\x1b[32mFinished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=30
+            self.watch_process, "Finished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=30
         )
         lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
         for lambda_function in lambda_functions:
@@ -471,7 +470,7 @@ class TestSyncWatchCodeUseContainer(TestSyncWatchUseContainer):
             self.test_data_path.joinpath("code", "before", "function", "requirements.txt"),
         )
         read_until_string(
-            self.watch_process, "\x1b[32mFinished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=45
+            self.watch_process, "Finished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=45
         )
 
         lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
@@ -519,7 +518,7 @@ class TestSyncWatchCodeOnly(TestSyncWatchBase):
             tags="integ=true clarity=yes foo_bar=baz",
         )
         self.watch_process = start_persistent_process(sync_command_list, cwd=self.test_data_path)
-        read_until_string(self.watch_process, "\x1b[32mSync watch started.\x1b[0m\n", timeout=30)
+        read_until_string(self.watch_process, "Sync watch started.\x1b[0m\n", timeout=30)
 
         self.stack_resources = self._get_stacks(self.stack_name)
 
@@ -533,7 +532,7 @@ class TestSyncWatchCodeOnly(TestSyncWatchBase):
             )
             read_until_string(
                 self.watch_process,
-                "\x1b[32mFinished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
+                "Finished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
                 timeout=45,
             )
             layer_contents = self.get_dependency_layer_contents_from_arn(self.stack_resources, "python", 2)
@@ -545,7 +544,7 @@ class TestSyncWatchCodeOnly(TestSyncWatchBase):
             self.test_data_path.joinpath("code", "before", "function", "app.py"),
         )
         read_until_string(
-            self.watch_process, "\x1b[32mFinished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=30
+            self.watch_process, "Finished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=30
         )
         lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
         for lambda_function in lambda_functions:
@@ -560,7 +559,7 @@ class TestSyncWatchCodeOnly(TestSyncWatchBase):
         )
         read_until_string(
             self.watch_process,
-            "\x1b[32mFinished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
+            "Finished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
             timeout=30,
         )
         lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
@@ -677,7 +676,7 @@ class TestSyncWatchAutoSkipInfra(SyncIntegBase):
         self.watch_process = start_persistent_process(sync_command_list, cwd=self.test_dir)
 
         read_until_string(
-            self.watch_process, "\x1b[32mFinished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=100
+            self.watch_process, "Finished syncing Lambda Function HelloWorldFunction.\x1b[0m\n", timeout=100
         )
 
         kill_process(self.watch_process)
@@ -712,7 +711,7 @@ class TestSyncWatchAutoSkipInfra(SyncIntegBase):
 
         read_until_string(
             self.watch_process,
-            "\x1b[32mFinished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
+            "Finished syncing Function Layer Reference Sync HelloWorldFunction.\x1b[0m\n",
             timeout=100,
         )
 
@@ -747,7 +746,7 @@ class TestSyncWatchAutoSkipInfra(SyncIntegBase):
 
         read_until_string(
             self.watch_process,
-            "\x1b[32mFinished syncing RestApi HelloWorldApi.\x1b[0m\n",
+            "Finished syncing RestApi HelloWorldApi.\x1b[0m\n",
             timeout=100,
         )
         time.sleep(API_SLEEP)
@@ -779,7 +778,7 @@ class TestSyncWatchAutoSkipInfra(SyncIntegBase):
 
         read_until_string(
             self.watch_process,
-            "\x1b[32mFinished syncing StepFunctions HelloStepFunction.\x1b[0m\n",
+            "Finished syncing StepFunctions HelloStepFunction.\x1b[0m\n",
             timeout=100,
         )
         time.sleep(SFN_SLEEP)
@@ -826,3 +825,39 @@ class TestSyncWatchInfraWithInvalidTemplate(TestSyncWatchBase):
 
         # Updated Infra Validation
         self.run_initial_infra_validation()
+
+
+class TestSyncWatchCodeWatchExclude(TestSyncWatchEsbuildBase):
+    dependency_layer = False
+    template_before = str(Path("code", "before", "template-esbuild.yaml"))
+    watch_exclude = ["HelloWorldFunction=app.ts"]
+
+    def test_sync_watch_code_excludes(self):
+        self.stack_resources = self._get_stacks(self.stack_name)
+
+        # Test Lambda Function
+        lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
+        for lambda_function in lambda_functions:
+            lambda_response = json.loads(self._get_lambda_response(lambda_function))
+            self.assertNotIn("extra_message", lambda_response)
+            self.assertEqual(lambda_response.get("message"), "hello world")
+
+        self.update_file(
+            self.test_data_path.joinpath("code", "after", "esbuild_function", "app.ts"),
+            self.test_data_path.joinpath("code", "before", "esbuild_function", "app.ts"),
+        )
+
+        try:
+            # wait a couple of seconds to see if a sync flow starts
+            read_until_string(self.watch_process, "", timeout=3)
+            self.fail("Sync started syncflow when app.ts file update was ignored")
+        except TimeoutError:
+            # got timeout error, this is expected since there isn't
+            # suppose to be a sync
+            pass
+
+        lambda_functions = self.stack_resources.get(AWS_LAMBDA_FUNCTION)
+        for lambda_function in lambda_functions:
+            lambda_response = json.loads(self._get_lambda_response(lambda_function))
+            self.assertNotIn("extra_message", lambda_response)
+            self.assertEqual(lambda_response.get("message"), "hello world")

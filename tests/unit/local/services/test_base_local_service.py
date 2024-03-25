@@ -1,5 +1,6 @@
+import signal
 from unittest import TestCase
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, ANY
 
 from parameterized import parameterized, param
 
@@ -9,14 +10,14 @@ from samcli.local.services.base_local_service import BaseLocalService, LambdaOut
 class TestLocalHostRunner(TestCase):
     def test_runtime_error_raised_when_app_not_created(self):
         is_debugging = False
-        service = BaseLocalService(is_debugging=is_debugging, port=3000, host="127.0.0.1")
+        service = BaseLocalService(is_debugging=is_debugging, port=3000, host="127.0.0.1", ssl_context=None)
 
         with self.assertRaises(RuntimeError):
             service.run()
 
     def test_run_starts_service_multithreaded(self):
         is_debugging = False  # multithreaded
-        service = BaseLocalService(is_debugging=is_debugging, port=3000, host="127.0.0.1")
+        service = BaseLocalService(is_debugging=is_debugging, port=3000, host="127.0.0.1", ssl_context=None)
 
         service._app = Mock()
         app_run_mock = Mock()
@@ -24,11 +25,11 @@ class TestLocalHostRunner(TestCase):
 
         service.run()
 
-        app_run_mock.assert_called_once_with(threaded=True, host="127.0.0.1", port=3000)
+        app_run_mock.assert_called_once_with(threaded=True, host="127.0.0.1", port=3000, ssl_context=None)
 
     def test_run_starts_service_singlethreaded(self):
         is_debugging = True  # singlethreaded
-        service = BaseLocalService(is_debugging=is_debugging, port=3000, host="127.0.0.1")
+        service = BaseLocalService(is_debugging=is_debugging, port=3000, host="127.0.0.1", ssl_context=None)
 
         service._app = Mock()
         app_run_mock = Mock()
@@ -36,7 +37,7 @@ class TestLocalHostRunner(TestCase):
 
         service.run()
 
-        app_run_mock.assert_called_once_with(threaded=False, host="127.0.0.1", port=3000)
+        app_run_mock.assert_called_once_with(threaded=False, host="127.0.0.1", port=3000, ssl_context=None)
 
     @patch("samcli.local.services.base_local_service.Response")
     def test_service_response(self, flask_response_patch):
@@ -55,9 +56,23 @@ class TestLocalHostRunner(TestCase):
         self.assertEqual(actual_response.status_code, 200)
         self.assertEqual(actual_response.headers, {"Content-Type": "application/json"})
 
+    @patch("samcli.local.services.base_local_service.signal.signal")
+    def test_service_registers_sigterm_interrupt(self, signal_mock):
+        service = BaseLocalService(is_debugging=False, port=3000, host="127.0.0.1", ssl_context=None)
+
+        service._app = Mock()
+        app_run_mock = Mock()
+        service._app.run = app_run_mock
+
+        service.run()
+
+        signal_mock.assert_called_once_with(signal.SIGTERM, ANY)
+
+        app_run_mock.assert_called_once_with(threaded=True, host="127.0.0.1", port=3000, ssl_context=None)
+
     def test_create_returns_not_implemented(self):
         is_debugging = False
-        service = BaseLocalService(is_debugging=is_debugging, port=3000, host="127.0.0.1")
+        service = BaseLocalService(is_debugging=is_debugging, port=3000, host="127.0.0.1", ssl_context=None)
 
         with self.assertRaises(NotImplementedError):
             service.create()

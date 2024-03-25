@@ -1,6 +1,7 @@
 """
 Init Command Options related Datastructures for formatting.
 """
+
 from typing import Dict, List
 
 from samcli.cli.core.options import ALL_COMMON_OPTIONS, SAVE_PARAMS_OPTIONS, add_common_options_info
@@ -25,10 +26,7 @@ NON_INTERACTIVE_OPTIONS: List[str] = ["no_interactive", "no_input", "extra_conte
 
 CONFIGURATION_OPTION_NAMES: List[str] = ["config_env", "config_file"] + SAVE_PARAMS_OPTIONS
 
-ADDITIONAL_OPTIONS: List[str] = [
-    "tracing",
-    "application_insights",
-]
+ADDITIONAL_OPTIONS: List[str] = ["tracing", "application_insights", "structured_logging"]
 
 ALL_OPTIONS: List[str] = (
     APPLICATION_OPTIONS + NON_INTERACTIVE_OPTIONS + CONFIGURATION_OPTION_NAMES + ADDITIONAL_OPTIONS + ALL_COMMON_OPTIONS

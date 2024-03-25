@@ -1,6 +1,7 @@
 """
 Remote Invoke Command Options related Datastructures for formatting.
 """
+
 from typing import Dict, List
 
 from samcli.cli.core.options import ALL_COMMON_OPTIONS, SAVE_PARAMS_OPTIONS, add_common_options_info
@@ -11,7 +12,7 @@ from samcli.cli.row_modifiers import RowDefinition
 
 INFRASTRUCTURE_OPTION_NAMES: List[str] = ["stack_name"]
 
-INPUT_EVENT_OPTIONS: List[str] = ["event", "event_file"]
+INPUT_EVENT_OPTIONS: List[str] = ["event", "event_file", "test_event_name"]
 
 ADDITIONAL_OPTIONS: List[str] = ["parameter", "output"]
 

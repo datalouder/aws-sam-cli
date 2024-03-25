@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 from threading import Thread
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, cast
 from collections import namedtuple
 from subprocess import Popen, PIPE, TimeoutExpired
 from queue import Queue
@@ -18,10 +18,13 @@ from uuid import uuid4
 
 import boto3
 import psutil
+import docker
+import packaging.version
 
 RUNNING_ON_APPVEYOR = os.environ.get("APPVEYOR", False)
 IS_WINDOWS = platform.system().lower() == "windows"
-RUNNING_ON_CI = RUNNING_ON_APPVEYOR or os.environ.get("CI", False)
+RUNNING_ON_GITHUB_ACTIONS = os.environ.get("CI", False)
+RUNNING_ON_CI = RUNNING_ON_APPVEYOR or RUNNING_ON_GITHUB_ACTIONS
 RUNNING_TEST_FOR_MASTER_ON_CI = (
     os.environ.get("APPVEYOR_REPO_BRANCH", os.environ.get("GITHUB_REF_NAME", "master")) != "master"
 )
@@ -291,3 +294,37 @@ class UpdatableSARTemplate:
 
     def __exit__(self, *args):
         self.clean()
+
+
+RUNTIME_NOT_SUPPORTED_BY_DOCKER_MSG = "Runtime is not supported the installed Docker version."
+
+
+def runtime_supported_by_docker(runtime: str) -> bool:
+    """
+    To determine if a test ca on runtime and docker_version, in case the test is run in an environment with a very old version of docker
+
+    Container test for AL2023-based runtimes (i.e. provided.al2023, java21, python3.12 and nodejs20.x as of 2023-12-01) requires docker 20.10.10+
+    See: https://docs.docker.com/engine/release-notes/20.10/#201010
+
+    """
+    al2023_based_runtimes = {
+        "provided.al2023",
+        "nodejs20.x",
+        "java21",
+        "python3.12",
+        "dotnet8",
+    }
+    min_docker_version = "20.10.10"
+    return runtime not in al2023_based_runtimes or (
+        runtime in al2023_based_runtimes and _version_gte(get_docker_version(), min_docker_version)
+    )
+
+
+def _version_gte(version1: str, version2: str) -> bool:
+    v1 = packaging.version.parse(version1)
+    v2 = packaging.version.parse(version2)
+    return v1 >= v2
+
+
+def get_docker_version() -> str:
+    return cast(str, docker.from_env().info().get("ServerVersion", "0.0.0"))

@@ -42,7 +42,7 @@ class TestSamConfigForAllCommands(TestCase):
         config_values = {
             "no_interactive": True,
             "location": "github.com",
-            "runtime": "nodejs14.x",
+            "runtime": "nodejs20.x",
             "dependency_manager": "maven",
             "output_dir": "myoutput",
             "name": "myname",
@@ -70,7 +70,7 @@ class TestSamConfigForAllCommands(TestCase):
                 "github.com",
                 False,
                 ZIP,
-                "nodejs14.x",
+                "nodejs20.x",
                 None,
                 None,
                 "maven",
@@ -81,6 +81,7 @@ class TestSamConfigForAllCommands(TestCase):
                 '{"key": "value", "key2": "value2"}',
                 None,
                 ANY,
+                None,
             )
 
     @patch("samcli.commands.validate.validate.do_cli")
@@ -157,7 +158,7 @@ class TestSamConfigForAllCommands(TestCase):
                 ("",),
                 ("",),
                 None,
-                None,
+                False,
                 "READ",
             )
 
@@ -217,7 +218,7 @@ class TestSamConfigForAllCommands(TestCase):
                 ("",),
                 ("",),
                 None,
-                None,
+                False,
                 "READ",
             )
 
@@ -274,7 +275,7 @@ class TestSamConfigForAllCommands(TestCase):
                 (),
                 (),
                 None,
-                None,
+                False,
                 "READ",
             )
 
@@ -330,7 +331,7 @@ class TestSamConfigForAllCommands(TestCase):
                 ("Function1=image_1", "image_2"),
                 (),
                 None,
-                None,
+                False,
                 "READ",
             )
 
@@ -392,6 +393,7 @@ class TestSamConfigForAllCommands(TestCase):
                 {"Key": "Value", "Key2": "Value2"},
                 "localhost",
                 "127.0.0.1",
+                {},
                 ("image",),
                 None,
             )
@@ -402,6 +404,7 @@ class TestSamConfigForAllCommands(TestCase):
             "template_file": "mytemplate.yaml",
             "host": "127.0.0.1",
             "port": 12345,
+            "disable_authorizer": False,
             "static_dir": "static_dir",
             "env_vars": "envvar.json",
             "debug_port": [1, 2, 3],
@@ -437,6 +440,7 @@ class TestSamConfigForAllCommands(TestCase):
                 ANY,
                 "127.0.0.1",
                 12345,
+                False,
                 "static_dir",
                 str(Path(os.getcwd(), "mytemplate.yaml")),
                 "envvar.json",
@@ -456,7 +460,10 @@ class TestSamConfigForAllCommands(TestCase):
                 None,
                 "localhost",
                 "127.0.0.1",
+                {},
                 ("image",),
+                None,
+                None,
                 None,
             )
 
@@ -518,6 +525,7 @@ class TestSamConfigForAllCommands(TestCase):
                 None,
                 "localhost",
                 "127.0.0.1",
+                {},
                 ("image",),
                 None,
             )
@@ -903,7 +911,7 @@ class TestSamConfigForAllCommands(TestCase):
                 LOG.exception("Command failed", exc_info=result.exc_info)
             self.assertIsNone(result.exception)
 
-            do_cli_mock.assert_called_with(ANY, str(Path(os.getcwd(), "mytemplate.yaml")), "0.1.1")
+            do_cli_mock.assert_called_with(ANY, str(Path(os.getcwd(), "mytemplate.yaml")), "0.1.1", False)
 
     @patch("samcli.cli.main.gather_system_info")
     @patch("samcli.cli.main.gather_additional_dependencies_info")
@@ -967,6 +975,7 @@ class TestSamConfigForAllCommands(TestCase):
             "confirm_changeset": True,
             "region": "myregion",
             "signing_profiles": "function=profile:owner",
+            "watch_exclude": {"HelloWorld": ["file.txt", "other.txt"], "HelloMars": ["single.file"]},
         }
 
         with samconfig_parameters(["sync"], self.scratch_dir, **config_values) as config_path:
@@ -1010,7 +1019,8 @@ class TestSamConfigForAllCommands(TestCase):
                 (),
                 "samconfig.toml",
                 "default",
-                None,
+                False,
+                {"HelloWorld": ["file.txt", "other.txt"], "HelloMars": ["single.file"]},
             )
 
 
@@ -1052,7 +1062,9 @@ class TestSamConfigWithOverrides(TestCase):
         }
 
         # NOTE: Because we don't load the full Click BaseCommand here, this is mounted as top-level command
-        with samconfig_parameters(["start-lambda"], self.scratch_dir, **config_values) as config_path:
+        with samconfig_parameters(
+            ["start-lambda"], self.scratch_dir, **config_values
+        ) as config_path, tempfile.NamedTemporaryFile() as key_file, tempfile.NamedTemporaryFile() as cert_file:
             from samcli.commands.local.start_lambda.cli import cli
 
             LOG.debug(Path(config_path).read_text())
@@ -1128,6 +1140,7 @@ class TestSamConfigWithOverrides(TestCase):
                 None,
                 "localhost",
                 "127.0.0.1",
+                {},
                 ("image",),
                 None,
             )
@@ -1154,7 +1167,9 @@ class TestSamConfigWithOverrides(TestCase):
         }
 
         # NOTE: Because we don't load the full Click BaseCommand here, this is mounted as top-level command
-        with samconfig_parameters(["start-lambda"], self.scratch_dir, **config_values) as config_path:
+        with samconfig_parameters(
+            ["start-lambda"], self.scratch_dir, **config_values
+        ) as config_path, tempfile.NamedTemporaryFile() as key_file, tempfile.NamedTemporaryFile() as cert_file:
             from samcli.commands.local.start_lambda.cli import cli
 
             LOG.debug(Path(config_path).read_text())
@@ -1222,6 +1237,7 @@ class TestSamConfigWithOverrides(TestCase):
                 None,
                 "localhost",
                 "127.0.0.1",
+                {},
                 ("image",),
                 None,
             )

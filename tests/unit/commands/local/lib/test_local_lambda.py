@@ -1,6 +1,7 @@
 """
 Testing local lambda runner
 """
+
 import os
 import posixpath
 from unittest import TestCase
@@ -36,11 +37,13 @@ class TestLocalLambda_get_aws_creds(TestCase):
         self.debug_context = None
         self.aws_profile = "myprofile"
         self.aws_region = "region"
+        self.real_path = "/real/path"
 
         self.local_lambda = LocalLambdaRunner(
             self.runtime_mock,
             self.function_provider_mock,
             self.cwd,
+            real_path=self.real_path,
             env_vars_values=self.env_vars_values,
             debug_context=self.debug_context,
             aws_profile=self.aws_profile,
@@ -183,6 +186,7 @@ class TestLocalLambda_make_env_vars(TestCase):
         self.runtime_mock = Mock()
         self.function_provider_mock = Mock()
         self.cwd = "/my/current/working/directory"
+        self.real_path = "/real/path"
         self.debug_context = None
         self.aws_profile = "myprofile"
         self.aws_region = "region"
@@ -194,6 +198,7 @@ class TestLocalLambda_make_env_vars(TestCase):
             self.runtime_mock,
             self.function_provider_mock,
             self.cwd,
+            real_path=self.real_path,
             env_vars_values=self.env_vars_values,
             debug_context=self.debug_context,
         )
@@ -253,6 +258,7 @@ class TestLocalLambda_make_env_vars(TestCase):
             function_url_config=None,
             runtime_management_config=None,
             function_build_info=FunctionBuildInfo.BuildableZip,
+            logging_config={"LogFormat": "JSON"},
         )
 
         self.local_lambda.env_vars_values = env_vars_values
@@ -264,6 +270,7 @@ class TestLocalLambda_make_env_vars(TestCase):
             function.memory,
             function.timeout,
             function.handler,
+            function.logging_config,
             variables={"var1": "value1"},
             shell_env_values=os_environ,
             override_values=expected_override_value,
@@ -362,6 +369,7 @@ class TestLocalLambda_make_env_vars(TestCase):
             function.memory,
             function.timeout,
             function.handler,
+            None,
             variables=None,
             shell_env_values=os_environ,
             override_values={},
@@ -383,11 +391,13 @@ class TestLocalLambda_get_invoke_config(TestCase):
         self.debug_context = None
         self.env_vars_values = {}
         self.aws_region = "region"
+        self.real_path = "/real/path"
 
         self.local_lambda = LocalLambdaRunner(
             self.runtime_mock,
             self.function_provider_mock,
             self.cwd,
+            real_path=self.real_path,
             env_vars_values=self.env_vars_values,
             debug_context=self.debug_context,
         )
@@ -453,9 +463,10 @@ class TestLocalLambda_get_invoke_config(TestCase):
             architecture=ARM64,
             full_path=function.full_path,
             runtime_management_config=function.runtime_management_config,
+            code_real_path=codepath,
         )
 
-        resolve_code_path_patch.assert_called_with(self.cwd, function.codeuri)
+        resolve_code_path_patch.assert_called_with(self.real_path, function.codeuri)
         self.local_lambda._make_env_vars.assert_called_with(function)
 
     @patch("samcli.commands.local.lib.local_lambda.resolve_code_path")
@@ -522,9 +533,10 @@ class TestLocalLambda_get_invoke_config(TestCase):
             architecture=X86_64,
             full_path=function.full_path,
             runtime_management_config=function.runtime_management_config,
+            code_real_path=codepath,
         )
 
-        resolve_code_path_patch.assert_called_with(self.cwd, "codeuri")
+        resolve_code_path_patch.assert_called_with(self.real_path, "codeuri")
         self.local_lambda._make_env_vars.assert_called_with(function)
 
 
@@ -537,11 +549,13 @@ class TestLocalLambda_invoke(TestCase):
         self.aws_profile = "myprofile"
         self.aws_region = "region"
         self.env_vars_values = {}
+        self.real_path = "/real/path"
 
         self.local_lambda = LocalLambdaRunner(
             self.runtime_mock,
             self.function_provider_mock,
             self.cwd,
+            real_path=self.real_path,
             env_vars_values=self.env_vars_values,
             debug_context=self.debug_context,
         )
@@ -569,6 +583,7 @@ class TestLocalLambda_invoke(TestCase):
             stderr=stderr,
             container_host=None,
             container_host_interface=None,
+            extra_hosts=None,
         )
 
     @patch("samcli.commands.local.lib.local_lambda.validate_architecture_runtime")
@@ -594,6 +609,7 @@ class TestLocalLambda_invoke(TestCase):
             stderr=stderr,
             container_host=None,
             container_host_interface=None,
+            extra_hosts=None,
         )
 
     @patch("samcli.commands.local.lib.local_lambda.validate_architecture_runtime")
@@ -677,6 +693,7 @@ class TestLocalLambda_invoke(TestCase):
             stderr=stderr,
             container_host=None,
             container_host_interface=None,
+            extra_hosts=None,
         )
 
     def test_must_raise_if_imageuri_not_found(self):
@@ -722,11 +739,13 @@ class TestLocalLambda_invoke_with_container_host_option(TestCase):
         self.env_vars_values = {}
         self.container_host = "localhost"
         self.container_host_interface = "127.0.0.1"
+        self.real_path = "/real/path"
 
         self.local_lambda = LocalLambdaRunner(
             self.runtime_mock,
             self.function_provider_mock,
             self.cwd,
+            real_path=self.real_path,
             env_vars_values=self.env_vars_values,
             debug_context=self.debug_context,
             container_host=self.container_host,
@@ -756,6 +775,7 @@ class TestLocalLambda_invoke_with_container_host_option(TestCase):
             stderr=stderr,
             container_host="localhost",
             container_host_interface="127.0.0.1",
+            extra_hosts=None,
         )
 
 
@@ -768,11 +788,13 @@ class TestLocalLambda_is_debugging(TestCase):
         self.aws_profile = "myprofile"
         self.aws_region = "region"
         self.env_vars_values = {}
+        self.real_path = "/real/path"
 
         self.local_lambda = LocalLambdaRunner(
             self.runtime_mock,
             self.function_provider_mock,
             self.cwd,
+            real_path=self.real_path,
             env_vars_values=self.env_vars_values,
             debug_context=self.debug_context,
         )
@@ -785,6 +807,7 @@ class TestLocalLambda_is_debugging(TestCase):
             self.runtime_mock,
             self.function_provider_mock,
             self.cwd,
+            self.real_path,
             env_vars_values=self.env_vars_values,
             debug_context=None,
         )

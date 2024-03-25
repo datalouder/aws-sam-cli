@@ -26,7 +26,7 @@ from samcli.commands.local.lib.exceptions import InvalidIntermediateImageError
 from samcli.commands.local.start_lambda.core.command import InvokeLambdaCommand
 from samcli.lib.telemetry.metric import track_command
 from samcli.lib.utils.version_checker import check_newer_version
-from samcli.local.docker.exceptions import ContainerNotStartableException, PortAlreadyInUse
+from samcli.local.docker.exceptions import ContainerNotStartableException, PortAlreadyInUse, ProcessSigTermException
 
 LOG = logging.getLogger(__name__)
 
@@ -96,6 +96,7 @@ def cli(
     debug_function,
     container_host,
     container_host_interface,
+    add_host,
     invoke_image,
     hook_name,
     skip_prepare_infra,
@@ -128,6 +129,7 @@ def cli(
         debug_function,
         container_host,
         container_host_interface,
+        add_host,
         invoke_image,
         hook_name,
     )  # pragma: no cover
@@ -155,6 +157,7 @@ def do_cli(  # pylint: disable=R0914
     debug_function,
     container_host,
     container_host_interface,
+    add_host,
     invoke_image,
     hook_name,
 ):
@@ -200,6 +203,7 @@ def do_cli(  # pylint: disable=R0914
             shutdown=shutdown,
             container_host=container_host,
             container_host_interface=container_host_interface,
+            add_host=add_host,
             invoke_images=processed_invoke_images,
         ) as invoke_context:
             service = LocalLambdaService(lambda_invoke_context=invoke_context, port=port, host=host)
@@ -224,3 +228,5 @@ def do_cli(  # pylint: disable=R0914
         raise UserException(str(ex), wrapped_from=ex.__class__.__name__) from ex
     except ContainerNotStartableException as ex:
         raise UserException(str(ex), wrapped_from=ex.__class__.__name__) from ex
+    except ProcessSigTermException:
+        LOG.debug("Successfully exited SIGTERM terminated process")

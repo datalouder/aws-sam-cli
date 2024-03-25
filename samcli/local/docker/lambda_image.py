@@ -1,6 +1,7 @@
 """
 Generates a Docker Image to be used for invoking a function locally
 """
+
 import hashlib
 import logging
 import os
@@ -32,25 +33,25 @@ RAPID_IMAGE_TAG_PREFIX = "rapid"
 
 
 class Runtime(Enum):
-    nodejs12x = "nodejs12.x"
-    nodejs14x = "nodejs14.x"
     nodejs16x = "nodejs16.x"
     nodejs18x = "nodejs18.x"
-    python37 = "python3.7"
+    nodejs20x = "nodejs20.x"
     python38 = "python3.8"
     python39 = "python3.9"
     python310 = "python3.10"
     python311 = "python3.11"
-    ruby27 = "ruby2.7"
+    python312 = "python3.12"
     ruby32 = "ruby3.2"
-    java8 = "java8"
     java8al2 = "java8.al2"
     java11 = "java11"
     java17 = "java17"
+    java21 = "java21"
     go1x = "go1.x"
     dotnet6 = "dotnet6"
+    dotnet8 = "dotnet8"
     provided = "provided"
     providedal2 = "provided.al2"
+    providedal2023 = "provided.al2023"
 
     @classmethod
     def has_value(cls, value):
@@ -77,7 +78,7 @@ class Runtime(Enum):
         Returns
         -------
         str
-            Image name and tag for the runtime's base image, like `python:3.7` or `provided:al2`
+            Image name and tag for the runtime's base image, like `python:3.12` or `provided:al2`
         """
         runtime_image_tag = ""
         if runtime == cls.provided.value:
@@ -92,7 +93,7 @@ class Runtime(Enum):
         else:
             # This fits most runtimes format: `nameN.M` becomes `name:N.M` (python3.9 -> python:3.9)
             runtime_image_tag = re.sub(r"^([a-z]+)([0-9][a-z0-9\.]*)$", r"\1:\2", runtime)
-            # nodejs14.x, go1.x, etc don't have the `.x` part.
+            # nodejs20.x, go1.x, etc don't have the `.x` part.
             runtime_image_tag = runtime_image_tag.replace(".x", "")
 
         # Runtime image tags contain the architecture only if more than one is supported for that runtime
@@ -164,13 +165,13 @@ class LambdaImage:
             if self.invoke_images:
                 base_image = self.invoke_images.get(function_name, self.invoke_images.get(None))
             if not base_image:
-                # Gets the ECR image format like `python:3.7` or `nodejs:16-x86_64`
+                # Gets the ECR image format like `python:3.12` or `nodejs:16-x86_64`
                 runtime_only_number = re.split("[:-]", runtime_image_tag)[1]
                 tag_prefix = f"{runtime_only_number}-"
                 base_image = f"{self._INVOKE_REPO_PREFIX}/{runtime_image_tag}"
 
                 # Temporarily add a version tag to the emulation image so that we don't pull a broken image
-                if platform.system().lower() == "windows" and runtime in [Runtime.go1x.value, Runtime.java8.value]:
+                if platform.system().lower() == "windows" and runtime in [Runtime.go1x.value]:
                     LOG.info("Falling back to a previous version of the emulation image")
                     base_image = f"{base_image}.2023.08.02.10"
 
@@ -260,7 +261,7 @@ class LambdaImage:
             List of the layers
 
         runtime_image_tag str
-            Runtime version format to generate image name and tag (including architecture, e.g. "python:3.7-x86_64")
+            Runtime version format to generate image name and tag (including architecture, e.g. "python:3.12-x86_64")
 
         Returns
         -------
@@ -332,7 +333,7 @@ class LambdaImage:
             # Set only on Windows, unix systems will preserve the host permission into the tarball
             tar_filter = set_item_permission if platform.system().lower() == "windows" else None
 
-            with create_tarball(tar_paths, tar_filter=tar_filter) as tarballfile:
+            with create_tarball(tar_paths, tar_filter=tar_filter, dereference=True) as tarballfile:
                 try:
                     resp_stream = self.docker_client.api.build(
                         fileobj=tarballfile,

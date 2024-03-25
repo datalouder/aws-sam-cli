@@ -1,11 +1,12 @@
 """
 Context object used by build command
 """
+
 import logging
 import os
 import pathlib
 import shutil
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import click
 
@@ -16,14 +17,14 @@ from samcli.commands._utils.template import (
     move_template,
 )
 from samcli.commands.build.exceptions import InvalidBuildDirException, MissingBuildMethodException
-from samcli.commands.build.utils import prompt_user_to_enable_mount_with_write_if_needed, MountMode
+from samcli.commands.build.utils import MountMode, prompt_user_to_enable_mount_with_write_if_needed
 from samcli.commands.exceptions import UserException
 from samcli.lib.bootstrap.nested_stack.nested_stack_manager import NestedStackManager
 from samcli.lib.build.app_builder import (
     ApplicationBuilder,
+    ApplicationBuildResult,
     BuildError,
     UnsupportedBuilderLibraryVersionError,
-    ApplicationBuildResult,
 )
 from samcli.lib.build.build_graph import DEFAULT_DEPENDENCIES_DIR
 from samcli.lib.build.bundler import EsbuildBundlerManager
@@ -33,12 +34,12 @@ from samcli.lib.build.exceptions import (
 )
 from samcli.lib.build.workflow_config import UnsupportedRuntimeException
 from samcli.lib.intrinsic_resolver.intrinsics_symbol_table import IntrinsicsSymbolTable
-from samcli.lib.providers.provider import ResourcesToBuildCollector, Stack, Function, LayerVersion
+from samcli.lib.providers.provider import LayerVersion, ResourcesToBuildCollector, Stack
 from samcli.lib.providers.sam_api_provider import SamApiProvider
 from samcli.lib.providers.sam_function_provider import SamFunctionProvider
 from samcli.lib.providers.sam_layer_provider import SamLayerProvider
 from samcli.lib.providers.sam_stack_provider import SamLocalStackProvider
-from samcli.lib.telemetry.event import EventTracker
+from samcli.lib.telemetry.event import EventName, EventTracker, UsedFeature
 from samcli.lib.utils.osutils import BUILD_DIR_PERMISSIONS
 from samcli.local.docker.manager import ContainerManager
 from samcli.local.lambdafn.exceptions import (
@@ -232,12 +233,14 @@ class BuildContext:
     def get_resources_to_build(self):
         return self.resources_to_build
 
-    def run(self):
+    def run(self) -> None:
         """Runs the building process by creating an ApplicationBuilder."""
         if self._is_sam_template():
             SamApiProvider.check_implicit_api_resource_ids(self.stacks)
 
         self._stacks = self._handle_build_pre_processing()
+
+        caught_exception: Optional[Exception] = None
 
         try:
             # boolean value indicates if mount with write or not, defaults to READ ONLY
@@ -276,7 +279,7 @@ class BuildContext:
             self._check_rust_cargo_experimental_flag()
 
             for f in self.get_resources_to_build().functions:
-                EventTracker.track_event("BuildFunctionRuntime", f.runtime)
+                EventTracker.track_event(EventName.BUILD_FUNCTION_RUNTIME.value, f.runtime)
 
             self._build_result = builder.build()
 
@@ -306,6 +309,8 @@ class BuildContext:
 
                 click.secho(msg, fg="yellow")
         except FunctionNotFound as function_not_found_ex:
+            caught_exception = function_not_found_ex
+
             raise UserException(
                 str(function_not_found_ex), wrapped_from=function_not_found_ex.__class__.__name__
             ) from function_not_found_ex
@@ -317,6 +322,8 @@ class BuildContext:
             InvalidBuildGraphException,
             ResourceNotFound,
         ) as ex:
+            caught_exception = ex
+
             click.secho("\nBuild Failed", fg="red")
 
             # Some Exceptions have a deeper wrapped exception that needs to be surfaced
@@ -324,6 +331,12 @@ class BuildContext:
             deep_wrap = getattr(ex, "wrapped_from", None)
             wrapped_from = deep_wrap if deep_wrap else ex.__class__.__name__
             raise UserException(str(ex), wrapped_from=wrapped_from) from ex
+        finally:
+            if self.build_in_source:
+                exception_name = type(caught_exception).__name__ if caught_exception else None
+                EventTracker.track_event(
+                    EventName.USED_FEATURE.value, UsedFeature.BUILD_IN_SOURCE.value, exception_name
+                )
 
     def _is_sam_template(self) -> bool:
         """Check if a given template is a SAM template"""
@@ -564,8 +577,8 @@ Commands you can use next
 
         if not result.functions and not result.layers:
             # Collect all functions and layers that are not inline
-            all_resources = [f.name for f in self.function_provider.get_all() if not f.inlinecode]
-            all_resources.extend([l.name for l in self.layer_provider.get_all()])
+            all_resources = [func.name for func in self.function_provider.get_all() if not func.inlinecode]
+            all_resources.extend([layer.name for layer in self.layer_provider.get_all()])
 
             available_resource_message = (
                 f"{resource_identifier} not found. Possible options in your " f"template: {all_resources}"
@@ -586,16 +599,16 @@ Commands you can use next
         excludes: Tuple[str, ...] = self._exclude if self._exclude is not None else ()
         result.add_functions(
             [
-                f
-                for f in self.function_provider.get_all()
-                if (f.name not in excludes) and f.function_build_info.is_buildable()
+                func
+                for func in self.function_provider.get_all()
+                if (func.name not in excludes) and func.function_build_info.is_buildable()
             ]
         )
         result.add_layers(
             [
-                l
-                for l in self.layer_provider.get_all()
-                if (l.name not in excludes) and BuildContext.is_layer_buildable(l)
+                layer
+                for layer in self.layer_provider.get_all()
+                if (layer.name not in excludes) and BuildContext.is_layer_buildable(layer)
             ]
         )
         return result
@@ -626,7 +639,7 @@ Commands you can use next
             return
 
         resource_collector.add_function(function)
-        resource_collector.add_layers([l for l in function.layers if BuildContext.is_layer_buildable(l)])
+        resource_collector.add_layers([layer for layer in function.layers if BuildContext.is_layer_buildable(layer)])
 
     def _collect_single_buildable_layer(
         self, resource_identifier: str, resource_collector: ResourcesToBuildCollector

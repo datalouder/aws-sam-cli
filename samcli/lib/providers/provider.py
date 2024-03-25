@@ -2,6 +2,7 @@
 A provider class that can parse and return Lambda Functions from a variety of sources. A SAM template is one such
 source
 """
+
 import hashlib
 import logging
 import os
@@ -111,6 +112,8 @@ class Function(NamedTuple):
     stack_path: str = ""
     # Configuration for runtime management. Includes the fields `UpdateRuntimeOn` and `RuntimeVersionArn` (optional).
     runtime_management_config: Optional[Dict] = None
+    # LoggingConfig for Advanced logging
+    logging_config: Optional[Dict] = None
 
     @property
     def full_path(self) -> str:
@@ -240,11 +243,12 @@ class LayerVersion:
         self._metadata = metadata
         self._build_method = cast(Optional[str], metadata.get("BuildMethod", None))
         self._compatible_runtimes = compatible_runtimes
+        self._custom_layer_id = metadata.get(SAM_RESOURCE_ID_KEY)
 
         self._build_architecture = cast(str, metadata.get("BuildArchitecture", X86_64))
         self._compatible_architectures = compatible_architectures
+
         self._skip_build = bool(metadata.get(SAM_METADATA_SKIP_BUILD_KEY, False))
-        self._custom_layer_id = metadata.get(SAM_RESOURCE_ID_KEY)
 
     @staticmethod
     def _compute_layer_version(is_defined_within_template: bool, arn: str) -> Optional[int]:
@@ -583,7 +587,7 @@ class Stack:
         location: str,
         parameters: Optional[Dict],
         template_dict: Dict,
-        metadata: Optional[Dict] = None,
+        metadata: Optional[Dict[str, str]] = None,
     ):
         self.parent_stack_path = parent_stack_path
         self.name = name
@@ -596,8 +600,8 @@ class Stack:
 
     @property
     def stack_id(self) -> str:
-        _metadata = self.metadata if self.metadata else {}
-        return _metadata.get(SAM_RESOURCE_ID_KEY, self.name) if self.metadata else self.name
+        _metadata: Dict[str, str] = self.metadata or {}
+        return _metadata.get(SAM_RESOURCE_ID_KEY, self.name)
 
     @property
     def stack_path(self) -> str:
@@ -626,7 +630,7 @@ class Stack:
         if self._resources is not None:
             return self._resources
         processed_template_dict: Dict[str, Dict] = SamBaseProvider.get_template(self.template_dict, self.parameters)
-        self._resources = cast(Dict, processed_template_dict.get("Resources", {}))
+        self._resources = processed_template_dict.get("Resources", {})
         return self._resources
 
     @property
@@ -937,7 +941,7 @@ def get_unique_resource_ids(
     return output_resource_ids
 
 
-def get_skip_build(metadata: Optional[Dict]) -> bool:
+def get_skip_build(metadata: Optional[Dict[str, bool]]) -> bool:
     """
     Returns the value of SkipBuild property from Metadata, False if it is not defined
     """

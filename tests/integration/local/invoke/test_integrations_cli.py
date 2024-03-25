@@ -31,7 +31,7 @@ TIMEOUT = 300
         (Path("nested-templates/template-parent.yaml"),),
     ],
 )
-class TestSamPython37HelloWorldIntegration(InvokeIntegBase):
+class TestSamPythonHelloWorldIntegration(InvokeIntegBase):
     @pytest.mark.flaky(reruns=3)
     def test_invoke_returncode_is_zero(self):
         command_list = InvokeIntegBase.get_command_list(
@@ -242,7 +242,7 @@ class TestSamPython37HelloWorldIntegration(InvokeIntegBase):
             "HelloWorldServerlessFunction",
             template_path=self.template_path,
             event_path=self.event_path,
-            invoke_image="amazon/aws-sam-cli-emulation-image-python3.7",
+            invoke_image="public.ecr.aws/lambda/python:3.11-x86_64",
         )
 
         process = Popen(command_list, stdout=PIPE)
@@ -479,7 +479,7 @@ class TestSamPython37HelloWorldIntegration(InvokeIntegBase):
     @pytest.mark.flaky(reruns=3)
     @pytest.mark.timeout(timeout=TIMEOUT, method="thread")
     def test_skip_pull_image_in_env_var(self):
-        docker.from_env().api.pull("lambci/lambda:python3.7")
+        docker.from_env().api.pull("public.ecr.aws/lambda/python:3.11-x86_64")
 
         command_list = InvokeIntegBase.get_command_list(
             "HelloWorldLambdaFunction", template_path=self.template_path, event_path=self.event_path
@@ -1195,3 +1195,61 @@ class TestInvokeFunctionWithInlineCode(InvokeIntegBase):
             raise
 
         self.assertEqual(process.returncode, 1)
+
+
+class TestInvokeFunctionWithImageBytesAsReturn(InvokeIntegBase):
+    template = Path("template-return-image.yaml")
+
+    @pytest.mark.flaky(reruns=3)
+    def test_invoke_returncode_is_zero(self):
+        command_list = InvokeIntegBase.get_command_list(
+            "GetImageFunction", template_path=self.template_path, event_path=self.event_path
+        )
+
+        process = Popen(command_list, stdout=PIPE)
+        try:
+            process.communicate(timeout=TIMEOUT)
+        except TimeoutExpired:
+            process.kill()
+            raise
+
+        self.assertEqual(process.returncode, 0)
+
+    @pytest.mark.flaky(reruns=3)
+    def test_invoke_image_is_returned(self):
+        command_list = InvokeIntegBase.get_command_list(
+            "GetImageFunction", template_path=self.template_path, event_path=self.event_path
+        )
+
+        process = Popen(command_list, stdout=PIPE)
+        try:
+            stdout, _ = process.communicate(timeout=TIMEOUT)
+        except TimeoutExpired:
+            process.kill()
+            raise
+
+        # The first byte of a png image file is \x89 so we can check that to verify that it returned an image
+        self.assertEqual(stdout[0:1], b"\x89")
+
+
+class TestInvokeFunctionWithError(InvokeIntegBase):
+    template = Path("template.yml")
+
+    def test_function_exception(self):
+        command_list = InvokeIntegBase.get_command_list(
+            function_to_invoke="RaiseExceptionFunction", template_path=self.template_path
+        )
+
+        stack_trace_lines = [
+            "[ERROR] Exception: Lambda is raising an exception",
+            "Traceback (most recent call last):",
+            '\xa0\xa0File "/var/task/main.py", line 51, in raise_exception',
+            '\xa0\xa0\xa0\xa0raise Exception("Lambda is raising an exception")',
+        ]
+
+        result = run_command(command_list)
+        stderr = result.stderr.decode("utf-8").strip()
+
+        self.assertEqual(result.process.returncode, 0)
+        for line in stack_trace_lines:
+            self.assertIn(line, stderr)

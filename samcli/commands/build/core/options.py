@@ -1,10 +1,11 @@
 """
 Build Command Options related Datastructures for formatting.
 """
+
 from typing import Dict, List
 
-from samcli.cli.row_modifiers import RowDefinition
 from samcli.cli.core.options import ALL_COMMON_OPTIONS, SAVE_PARAMS_OPTIONS, add_common_options_info
+from samcli.cli.row_modifiers import RowDefinition
 
 # NOTE(sriram-mv): The ordering of the option lists matter, they are the order
 # in which options will be displayed.
@@ -27,7 +28,7 @@ CONFIGURATION_OPTION_NAMES: List[str] = ["config_env", "config_file"] + SAVE_PAR
 
 EXTENSION_OPTIONS: List[str] = ["hook_name", "skip_prepare_infra"]
 
-BUILD_STRATEGY_OPTIONS: List[str] = ["parallel", "exclude", "manifest", "cached"]
+BUILD_STRATEGY_OPTIONS: List[str] = ["parallel", "exclude", "manifest", "cached", "build_in_source"]
 
 ARTIFACT_LOCATION_OPTIONS: List[str] = [
     "build_dir",

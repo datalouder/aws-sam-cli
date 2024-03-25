@@ -1,6 +1,7 @@
 """
 Wraps watchdog to observe file system for any change.
 """
+
 import logging
 import platform
 import threading
@@ -119,7 +120,7 @@ class LambdaFunctionObserver:
             list[str]
                 List of lambda functions' source code paths to be observed
             """
-            code_paths = [function_config.code_abs_path]
+            code_paths = [function_config.code_real_path]
             if function_config.layers:
                 # Non-local layers will not have a codeuri property and don't need to be observed
                 code_paths += [layer.codeuri for layer in function_config.layers if layer.codeuri]

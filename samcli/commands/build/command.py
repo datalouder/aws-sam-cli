@@ -2,36 +2,38 @@
 CLI command for "build" command
 """
 
-import os
 import logging
-from typing import List, Optional, Dict, Tuple
+import os
+from typing import Dict, List, Optional, Tuple
+
 import click
 
+from samcli.cli.cli_config_file import ConfigProvider, configuration_option, save_params_option
 from samcli.cli.context import Context
+from samcli.cli.main import aws_creds_options, pass_context, print_cmdline_args
+from samcli.cli.main import common_options as cli_framework_options
+from samcli.commands._utils.option_value_processor import process_env_var, process_image_options
 from samcli.commands._utils.options import (
+    base_dir_option,
+    build_dir_option,
+    build_image_option,
+    build_in_source_option,
+    cache_dir_option,
+    cached_option,
+    docker_common_options,
+    hook_name_click_option,
+    manifest_option,
+    parameter_override_option,
     skip_prepare_infra_option,
     template_option_without_build,
-    docker_common_options,
-    parameter_override_option,
-    build_dir_option,
-    cache_dir_option,
-    base_dir_option,
-    manifest_option,
-    cached_option,
-    use_container_build_option,
-    build_image_option,
-    hook_name_click_option,
-    terraform_plan_file_option,
     terraform_project_root_path_option,
+    use_container_build_option,
 )
-from samcli.commands._utils.option_value_processor import process_env_var, process_image_options
-from samcli.cli.main import pass_context, common_options as cli_framework_options, aws_creds_options, print_cmdline_args
-from samcli.commands.build.core.command import BuildCommand
-from samcli.lib.telemetry.metric import track_command
-from samcli.cli.cli_config_file import configuration_option, ConfigProvider, save_params_option
-from samcli.lib.utils.version_checker import check_newer_version
 from samcli.commands.build.click_container import ContainerOptions
+from samcli.commands.build.core.command import BuildCommand
 from samcli.commands.build.utils import MountMode
+from samcli.lib.telemetry.metric import track_command
+from samcli.lib.utils.version_checker import check_newer_version
 
 LOG = logging.getLogger(__name__)
 
@@ -52,11 +54,11 @@ DESCRIPTION = """
   \b
   Supported Runtimes
   ------------------
-  1. Python 3.7, 3.8, 3.9, 3.10, 3.11 using PIP\n
-  2. Nodejs 18.x, 16.x, 14.x, 12.x using NPM\n
-  3. Ruby 2.7, 3.2 using Bundler\n
-  4. Java 8, Java 11, Java 17 using Gradle and Maven\n
-  5. Dotnet6 using Dotnet CLI (without --use-container)\n
+  1. Python 3.8, 3.9, 3.10, 3.11, 3.12 using PIP\n
+  2. Nodejs 20.x, 18.x, 16.x, 14.x, 12.x using NPM\n
+  3. Ruby 3.2 using Bundler\n
+  4. Java 8, Java 11, Java 17, Java 21 using Gradle and Maven\n
+  5. Dotnet8, Dotnet6 using Dotnet CLI\n
   6. Go 1.x using Go Modules (without --use-container)\n
 """
 
@@ -74,10 +76,11 @@ DESCRIPTION = """
 @terraform_project_root_path_option
 @hook_name_click_option(
     force_prepare=True,
-    invalid_coexist_options=["t", "template-file", "template", "parameter-overrides"],
+    invalid_coexist_options=["t", "template-file", "template", "parameter-overrides", "build-in-source"],
 )
 @skip_prepare_infra_option
 @use_container_build_option
+@build_in_source_option
 @click.option(
     "--container-env-var",
     "-e",
@@ -158,8 +161,9 @@ def cli(
     save_params: bool,
     hook_name: Optional[str],
     skip_prepare_infra: bool,
-    mount_with,
+    mount_with: str,
     terraform_project_root_path: Optional[str],
+    build_in_source: Optional[bool],
 ) -> None:
     """
     `sam build` command entry point
@@ -189,7 +193,7 @@ def cli(
         build_image,
         exclude,
         hook_name,
-        None,  # TODO: replace with build_in_source once it's added as a click option
+        build_in_source,
         mount_with,
     )  # pragma: no cover
 
@@ -216,7 +220,7 @@ def do_cli(  # pylint: disable=too-many-locals, too-many-statements
     exclude: Optional[Tuple[str, ...]],
     hook_name: Optional[str],
     build_in_source: Optional[bool],
-    mount_with,
+    mount_with: str,
 ) -> None:
     """
     Implementation of the ``cli`` method

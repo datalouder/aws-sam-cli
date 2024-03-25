@@ -1,4 +1,5 @@
 """Test sam deploy command"""
+
 from unittest import TestCase
 from unittest.mock import ANY, patch, MagicMock, Mock
 import tempfile
@@ -248,7 +249,8 @@ class TestSamDeployCommand(TestCase):
 
             self.deploy_command_context.on_failure = FailureMode.DELETE
 
-            self.deploy_command_context.run()
+            with self.assertRaises(DeployFailedError):
+                self.deploy_command_context.run()
 
             self.assertEqual(self.deploy_command_context.deployer.rollback_delete_stack.call_count, 1)
 
@@ -257,6 +259,7 @@ class TestSamDeployCommand(TestCase):
     @patch.object(Deployer, "execute_changeset", MagicMock())
     @patch.object(Deployer, "wait_for_execute", MagicMock())
     @patch.object(Deployer, "create_and_wait_for_changeset", MagicMock(return_value=({"Id": "test"}, "CREATE")))
+    @patch.object(Deployer, "get_last_event_time", MagicMock(return_value=1000))
     def test_on_failure_do_nothing(self, mock_session, mock_client):
         with tempfile.NamedTemporaryFile(delete=False) as template_file:
             template_file.write(b"{}")
@@ -268,5 +271,5 @@ class TestSamDeployCommand(TestCase):
             self.deploy_command_context.run()
 
             self.deploy_command_context.deployer.wait_for_execute.assert_called_with(
-                ANY, "CREATE", False, FailureMode.DO_NOTHING
+                ANY, "CREATE", False, FailureMode.DO_NOTHING, 1000
             )
