@@ -22,6 +22,7 @@ from samcli.lib.utils.code_trigger_factory import CodeTriggerFactory
 from samcli.lib.utils.colors import Colored, Colors
 from samcli.lib.utils.path_observer import HandlerObserver
 from samcli.lib.utils.resource_trigger import OnChangeCallback, TemplateTrigger
+from samcli.local.lambdafn.exceptions import ResourceNotFound
 
 if TYPE_CHECKING:  # pragma: no cover
     from samcli.commands.build.build_context import BuildContext
@@ -145,6 +146,16 @@ class WatchManager:
                 LOG.warning(
                     self._color.color_log(
                         msg="CodeTrigger not created as CodeUri or DefinitionUri is missing for %s.",
+                        color=Colors.WARNING,
+                    ),
+                    str(resource_id),
+                    extra=dict(markup=True),
+                )
+                continue
+            except ResourceNotFound:
+                LOG.warning(
+                    self._color.color_log(
+                        msg="CodeTrigger not created as %s is not found or is with a S3 Location.",
                         color=Colors.WARNING,
                     ),
                     str(resource_id),
@@ -352,7 +363,7 @@ class WatchManager:
                 #
                 # It looks like the other way a folder modified event can happen
                 # is if the permissions of the folder were changed
-                LOG.debug(f"Ignoring file system MODIFIED event for folder {event.src_path}")
+                LOG.debug(f"Ignoring file system MODIFIED event for folder {event.src_path!r}")
                 return
 
             # sync flow factory should always exist, but guarding just incase

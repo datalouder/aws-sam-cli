@@ -58,6 +58,7 @@ class TestDoCli(TestCase):
         self.config_env = "mock-default-env"
         self.config_file = "mock-default-filename"
         self.build_image = None
+        self.container_env_var_file = "file"
         MOCK_SAM_CONFIG.reset_mock()
 
     @parameterized.expand(
@@ -142,6 +143,7 @@ class TestDoCli(TestCase):
             self.tags,
             self.metadata,
             use_container,
+            self.container_env_var_file,
             self.build_image,
             self.config_file,
             self.config_env,
@@ -161,6 +163,7 @@ class TestDoCli(TestCase):
             cache_dir=DEFAULT_CACHE_DIR,
             clean=True,
             use_container=use_container,
+            container_env_var_file=self.container_env_var_file,
             parallel=True,
             parameter_overrides=self.parameter_overrides,
             mode=self.mode,
@@ -214,6 +217,7 @@ class TestDoCli(TestCase):
             disable_rollback=False,
             poll_delay=10,
             on_failure=None,
+            max_wait_duration=60,
         )
 
         execute_infra_mock.assert_called_with(
@@ -302,6 +306,7 @@ class TestDoCli(TestCase):
             self.tags,
             self.metadata,
             use_container,
+            self.container_env_var_file,
             self.build_image,
             self.config_file,
             self.config_env,
@@ -317,6 +322,7 @@ class TestDoCli(TestCase):
             cache_dir=DEFAULT_CACHE_DIR,
             clean=True,
             use_container=use_container,
+            container_env_var_file=self.container_env_var_file,
             parallel=True,
             parameter_overrides=self.parameter_overrides,
             mode=self.mode,
@@ -370,6 +376,7 @@ class TestDoCli(TestCase):
             disable_rollback=False,
             poll_delay=0.5,
             on_failure=None,
+            max_wait_duration=60,
         )
         execute_watch_mock.assert_called_once_with(
             template=self.template_file,
@@ -451,6 +458,7 @@ class TestDoCli(TestCase):
             self.tags,
             self.metadata,
             use_container,
+            self.container_env_var_file,
             self.build_image,
             self.config_file,
             self.config_env,

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import pathlib
+from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, cast
 
 import docker
@@ -50,7 +51,7 @@ from samcli.lib.utils import osutils
 from samcli.lib.utils.colors import Colored, Colors
 from samcli.lib.utils.lambda_builders import patch_runtime
 from samcli.lib.utils.packagetype import IMAGE, ZIP
-from samcli.lib.utils.path_utils import convert_path_to_unix_path
+from samcli.lib.utils.path_utils import check_path_valid_type, convert_path_to_unix_path
 from samcli.lib.utils.resources import (
     AWS_CLOUDFORMATION_STACK,
     AWS_LAMBDA_FUNCTION,
@@ -60,6 +61,7 @@ from samcli.lib.utils.resources import (
     AWS_SERVERLESS_LAYERVERSION,
 )
 from samcli.lib.utils.stream_writer import StreamWriter
+from samcli.local.docker.container import ContainerContext
 from samcli.local.docker.lambda_build_container import LambdaBuildContainer
 from samcli.local.docker.manager import ContainerManager, DockerImagePullFailedException
 from samcli.local.docker.utils import get_docker_platform, is_docker_reachable
@@ -109,6 +111,7 @@ class ApplicationBuilder:
         combine_dependencies: bool = True,
         build_in_source: Optional[bool] = None,
         mount_with_write: bool = False,
+        mount_symlinks: Optional[bool] = False,
     ) -> None:
         """
         Initialize the class
@@ -154,6 +157,8 @@ class ApplicationBuilder:
             Set to True to build in the source directory.
         mount_with_write: bool
             Mount source code directory with write permissions when building inside container.
+        mount_symlinks: Optional[bool]
+            True if symlinks should be mounted in the container.
         """
         self._resources_to_build = resources_to_build
         self._build_dir = build_dir
@@ -177,6 +182,7 @@ class ApplicationBuilder:
         self._combine_dependencies = combine_dependencies
         self._build_in_source = build_in_source
         self._mount_with_write = mount_with_write
+        self._mount_symlinks = mount_symlinks
 
     def build(self) -> ApplicationBuildResult:
         """
@@ -250,6 +256,7 @@ class ApplicationBuilder:
             function_build_details = FunctionBuildDefinition(
                 function.runtime,
                 function.codeuri,
+                function.imageuri,
                 function.packagetype,
                 function.architecture,
                 function.metadata,
@@ -410,7 +417,7 @@ class ApplicationBuilder:
             docker_tag = "-".join([docker_tag, docker_build_args["SAM_BUILD_MODE"]])
 
         if isinstance(docker_build_args, dict):
-            LOG.info("Setting DockerBuildArgs: %s for %s function", docker_build_args, function_name)
+            LOG.info("Setting DockerBuildArgs for %s function", function_name)
 
         build_args = {
             "path": str(docker_context_dir),
@@ -428,6 +435,7 @@ class ApplicationBuilder:
             LOG.debug("%s image is built for %s function", build_image, function_name)
         except docker.errors.BuildError as ex:
             LOG.error("Failed building function %s", function_name)
+            self._stream_lambda_image_build_logs(ex.build_log, function_name, False)
             raise DockerBuildFailed(str(ex)) from ex
 
         # The Docker-py low level api will stream logs back but if an exception is raised by the api
@@ -443,7 +451,9 @@ class ApplicationBuilder:
 
         return docker_tag
 
-    def _stream_lambda_image_build_logs(self, build_logs: List[Dict[str, str]], function_name: str) -> None:
+    def _stream_lambda_image_build_logs(
+        self, build_logs: List[Dict[str, str]], function_name: str, throw_on_error: bool = True
+    ) -> None:
         """
         Stream logs to the console from an Lambda image build.
 
@@ -454,11 +464,21 @@ class ApplicationBuilder:
         function_name str
             Name of the function that is being built
         """
-        build_log_streamer = LogStreamer(self._stream_writer)
+        build_log_streamer = LogStreamer(self._stream_writer, throw_on_error)
         try:
             build_log_streamer.stream_progress(build_logs)
         except LogStreamError as ex:
             raise DockerBuildFailed(msg=f"{function_name} failed to build: {str(ex)}") from ex
+
+    def _load_lambda_image(self, image_archive_path: str) -> str:
+        try:
+            with open(image_archive_path, mode="rb") as image_archive:
+                [image, *rest] = self._docker_client.images.load(image_archive)
+                if len(rest) != 0:
+                    raise DockerBuildFailed("Archive must represent a single image")
+                return f"{image.id}"
+        except (docker.errors.APIError, OSError) as ex:
+            raise DockerBuildFailed(msg=str(ex)) from ex
 
     def _build_layer(
         self,
@@ -599,6 +619,7 @@ class ApplicationBuilder:
         self,
         function_name: str,
         codeuri: str,
+        imageuri: Optional[str],
         packagetype: str,
         runtime: str,
         architecture: str,
@@ -619,6 +640,9 @@ class ApplicationBuilder:
             Name or LogicalId of the function
         codeuri : str
             Path to where the code lives
+        imageuri : str
+            Location of the Lambda Image which is of the form {image}:{tag}, sha256:{digest},
+            or a path to a local archive
         packagetype : str
             The package type, 'Zip' or 'Image', see samcli/lib/utils/packagetype.py
         runtime : str
@@ -646,6 +670,10 @@ class ApplicationBuilder:
             Path to the location where built artifacts are available
         """
         if packagetype == IMAGE:
+            if (
+                imageuri and check_path_valid_type(imageuri) and Path(imageuri).is_file()
+            ):  # something exists at this path and what exists is a file
+                return self._load_lambda_image(imageuri)  # should be an image archive – load it instead of building it
             # pylint: disable=fixme
             # FIXME: _build_lambda_image assumes metadata is not None, we need to throw an exception here
             return self._build_lambda_image(
@@ -866,7 +894,7 @@ class ApplicationBuilder:
             application_framework=config.application_framework,
         )
 
-        runtime = patch_runtime(runtime)
+        runtime_patched = patch_runtime(runtime)
 
         try:
             builder.build(
@@ -874,7 +902,8 @@ class ApplicationBuilder:
                 artifacts_dir,
                 scratch_dir,
                 manifest_path,
-                runtime=runtime,
+                runtime=runtime_patched,
+                unpatched_runtime=runtime,
                 executable_search_paths=config.executable_search_paths,
                 mode=self._mode,
                 options=options,
@@ -918,7 +947,6 @@ class ApplicationBuilder:
         log_level = LOG.getEffectiveLevel()
 
         container_env_vars = container_env_vars or {}
-
         container = LambdaBuildContainer(
             lambda_builders_protocol_version,
             config.language,
@@ -940,11 +968,12 @@ class ApplicationBuilder:
             build_in_source=self._build_in_source,
             mount_with_write=self._mount_with_write,
             build_dir=self._build_dir,
+            mount_symlinks=self._mount_symlinks,
         )
 
         try:
             try:
-                self._container_manager.run(container)
+                self._container_manager.run(container, context=ContainerContext.BUILD)
             except docker.errors.APIError as ex:
                 if "executable file not found in $PATH" in str(ex):
                     raise UnsupportedBuilderLibraryVersionError(

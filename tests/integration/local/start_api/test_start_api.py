@@ -7,7 +7,6 @@ import random
 from pathlib import Path
 from typing import Dict
 
-import docker.errors
 import requests
 from http.client import HTTPConnection
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1550,9 +1549,9 @@ class TestServiceCorsSwaggerRequestsWithRestAPI(StartApiIntegBaseClass):
         self.assertEqual(response.headers.get("Access-Control-Allow-Credentials"), "true")
         self.assertEqual(response.headers.get("Access-Control-Max-Age"), "510")
 
+    @parameterized.expand(["https://abc", None])
     @pytest.mark.flaky(reruns=3)
     @pytest.mark.timeout(timeout=600, method="thread")
-    @parameterized.expand(["https://abc", None])
     def test_cors_swagger_options(self, origin):
         """
         This tests that the Cors headers are added to OPTIONS responses
@@ -1560,9 +1559,9 @@ class TestServiceCorsSwaggerRequestsWithRestAPI(StartApiIntegBaseClass):
         response = requests.options(self.url + "/echobase64eventbody", **_create_request_params(origin))
         self.assert_cors(response)
 
+    @parameterized.expand(["https://abc", None])
     @pytest.mark.flaky(reruns=3)
     @pytest.mark.timeout(timeout=600, method="thread")
-    @parameterized.expand(["https://abc", None])
     def test_cors_swagger_get(self, origin):
         """
         This tests that the Cors headers are added to _other_ method responses
@@ -1686,9 +1685,9 @@ class TestServiceCorsGlobalRequests(StartApiIntegBaseClass):
     def setUp(self):
         self.url = "http://127.0.0.1:{}".format(self.port)
 
+    @parameterized.expand(["https://abc", None])
     @pytest.mark.flaky(reruns=3)
     @pytest.mark.timeout(timeout=600, method="thread")
-    @parameterized.expand(["https://abc", None])
     def test_cors_global(self, origin):
         """
         This tests that the Cors headers are added to OPTIONS response when the global property is set
@@ -2141,6 +2140,12 @@ class TestWarmContainersBaseClass(StartApiIntegBaseClass):
             if f"MODE={self.mode_env_variable}" in str(output):
                 running_containers += 1
         return running_containers
+
+    def tearDown(self) -> None:
+        # Use a new container test UUID for the next test run to avoid
+        # counting additional containers in the event of a retry
+        self.mode_env_variable = str(uuid.uuid4())
+        super().tearDown()
 
 
 @parameterized_class(
@@ -3204,6 +3209,20 @@ class TestWarmContainersRemoteLayers(WarmContainersWithRemoteLayersBase):
 class TestWarmContainersRemoteLayersLazyInvoke(WarmContainersWithRemoteLayersBase):
     template_path = "/testdata/start_api/template-warm-containers-layers.yaml"
     container_mode = ContainersInitializationMode.LAZY.value
+    mode_env_variable = str(uuid.uuid4())
+    parameter_overrides = {"ModeEnvVariable": mode_env_variable}
+
+    @pytest.mark.flaky(reruns=3)
+    @pytest.mark.timeout(timeout=600, method="thread")
+    def test_can_invoke_lambda_layer_successfully(self):
+        response = requests.get(self.url + "/", timeout=300)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content.decode("utf-8"), '"Layer1"')
+
+
+class TestWarmContainersMultipleRemoteLayersInvoke(WarmContainersWithRemoteLayersBase):
+    template_path = "/testdata/start_api/template-warm-containers-multi-layers.yaml"
+    container_mode = ContainersInitializationMode.EAGER.value
     mode_env_variable = str(uuid.uuid4())
     parameter_overrides = {"ModeEnvVariable": mode_env_variable}
 

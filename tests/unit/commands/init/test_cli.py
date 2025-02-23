@@ -3,17 +3,19 @@ import json
 import shutil
 import subprocess
 import tempfile
+from unittest import mock
+from parameterized import parameterized
 import requests
 from pathlib import Path
 from typing import Dict, Any
 from unittest import TestCase
-from unittest.mock import patch, ANY
+from unittest.mock import patch, ANY, Mock
 
 import botocore.exceptions
 import click
 from click.testing import CliRunner
 
-from samcli.commands.exceptions import UserException
+from samcli.commands.exceptions import PopularRuntimeNotFoundException, UserException
 from samcli.commands.init import cli as init_cmd
 from samcli.commands.init.command import do_cli as init_cli
 from samcli.commands.init.command import PackageType
@@ -25,7 +27,7 @@ from samcli.commands.init.init_templates import (
     get_template_value,
     template_does_not_meet_filter_criteria,
 )
-from samcli.commands.init.interactive_init_flow import get_sorted_runtimes
+from samcli.commands.init.interactive_init_flow import _get_latest_python_runtime, get_sorted_runtimes
 from samcli.lib.init import GenerateProjectFailedError
 from samcli.lib.utils import osutils
 from samcli.lib.utils.git_repo import GitRepo
@@ -149,7 +151,7 @@ class TestCli(TestCase):
             location=self.location,
             pt_explicit=self.pt_explicit,
             package_type=self.package_type,
-            runtime="nodejs20.x",
+            runtime="nodejs22.x",
             architecture=X86_64,
             base_image=self.base_image,
             dependency_manager="npm",
@@ -168,12 +170,12 @@ class TestCli(TestCase):
             # need to change the location validation check
             ANY,
             ZIP,
-            "nodejs20.x",
+            "nodejs22.x",
             "npm",
             self.output_dir,
             self.name,
             True,
-            {"runtime": "nodejs20.x", "project_name": "testing project", "architectures": {"value": ["x86_64"]}},
+            {"runtime": "nodejs22.x", "project_name": "testing project", "architectures": {"value": ["x86_64"]}},
             False,
             False,
             False,
@@ -2006,9 +2008,9 @@ N
         request_mock.side_effect = requests.Timeout()
         init_options_from_manifest_mock.return_value = [
             {
-                "directory": "python3.9/cookiecutter-aws-sam-hello-python",
+                "directory": "python3.13/cookiecutter-aws-sam-hello-python",
                 "displayName": "Hello World Example",
-                "dependencyManager": "npm",
+                "dependencyManager": "pip",
                 "appTemplate": "hello-world",
                 "packageType": "Zip",
                 "useCaseName": "Hello World Example",
@@ -2026,10 +2028,10 @@ N
 
         get_preprocessed_manifest_mock.return_value = {
             "Hello World Example": {
-                "python3.9": {
+                "python3.13": {
                     "Zip": [
                         {
-                            "directory": "python3.9/cookiecutter-aws-sam-hello-python3.9",
+                            "directory": "python3.13/cookiecutter-aws-sam-hello-python3.12",
                             "displayName": "Hello World Example",
                             "dependencyManager": "pip",
                             "appTemplate": "hello-world",
@@ -2070,16 +2072,17 @@ test-project
 
         runner = CliRunner()
         result = runner.invoke(init_cmd, input=user_input)
+        print(result.stdout)
         self.assertFalse(result.exception)
         generate_project_patch.assert_called_once_with(
             ANY,
             ZIP,
-            "python3.9",
+            "python3.13",
             "pip",
             ".",
             "test-project",
             True,
-            {"project_name": "test-project", "runtime": "python3.9", "architectures": {"value": ["x86_64"]}},
+            {"project_name": "test-project", "runtime": "python3.13", "architectures": {"value": ["x86_64"]}},
             False,
             False,
             False,
@@ -2200,6 +2203,24 @@ test-project
         for index, base_image in enumerate(base_images):
             runtime = get_runtime(IMAGE, base_image)
             self.assertEqual(runtime, expected_runtime[index])
+
+    @patch("samcli.commands.init.init_templates.requests")
+    @patch.object(InitTemplates, "__init__", MockInitTemplates.__init__)
+    def test_must_fallback_for_non_ok_http_response(self, requests_mock):
+        requests_mock.get.return_value = Mock(ok=False)
+        requests_mock.Timeout = requests.Timeout
+        requests_mock.ConnectionError = requests.ConnectionError
+
+        template = InitTemplates()
+        with mock.patch.object(
+            template, "clone_templates_repo", wraps=template.clone_templates_repo
+        ) as mocked_clone_templates_repo:
+            with mock.patch.object(
+                template, "get_manifest_path", wraps=template.get_manifest_path
+            ) as mocked_get_manifest_path:
+                template.get_preprocessed_manifest()
+                mocked_clone_templates_repo.assert_called_once()
+                mocked_get_manifest_path.assert_called_once()
 
     @patch("samcli.commands.init.init_templates.InitTemplates._get_manifest")
     @patch.object(InitTemplates, "__init__", MockInitTemplates.__init__)
@@ -3193,3 +3214,35 @@ test-project
             True,
             False,
         )
+
+    @parameterized.expand(
+        [
+            ({"python3.2": Any, "python3.100000": Any, "python3.14": Any}, "python3.100000"),
+            ({"python7.8": Any, "python9.1": Any}, "python9.1"),
+            ({"python6.1": Any, "python4.7": Any}, "python6.1"),
+        ]
+    )
+    def test_latest_python_fetcher_correct_latest(self, versions, expected):
+        with mock.patch(
+            "samcli.commands.init.interactive_init_flow.SUPPORTED_RUNTIMES",
+            versions,
+        ):
+            result = _get_latest_python_runtime()
+
+        self.assertEqual(result, expected)
+
+    def test_latest_python_fetcher_has_valid_supported_runtimes(self):
+        """
+        Mainly checks if the SUPPORTED_RUNTIMES constant actually has
+        Python runtime inside of it
+        """
+        result = _get_latest_python_runtime()
+        self.assertTrue(result, "Python was not found in the SUPPORTED_RUNTIMES const")
+
+    def test_latest_python_fetchers_raises_not_found(self):
+        with mock.patch(
+            "samcli.commands.init.interactive_init_flow.SUPPORTED_RUNTIMES",
+            {"invalid": Any},
+        ):
+            with self.assertRaises(PopularRuntimeNotFoundException):
+                _get_latest_python_runtime()

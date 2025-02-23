@@ -9,6 +9,7 @@ import os
 import posixpath
 from collections import namedtuple
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, Iterator, List, NamedTuple, Optional, Set, Union, cast
 
 from samcli.commands.local.cli_common.user_exceptions import (
@@ -24,6 +25,7 @@ from samcli.lib.samlib.resource_metadata_normalizer import (
 )
 from samcli.lib.utils.architecture import X86_64
 from samcli.lib.utils.packagetype import IMAGE
+from samcli.lib.utils.path_utils import check_path_valid_type
 from samcli.local.apigw.route import Route
 
 LOG = logging.getLogger(__name__)
@@ -165,6 +167,16 @@ class Function(NamedTuple):
                 f"Function {self.name} property Architectures should be a list of length 1"
             )
         return str(arch_list[0])
+
+    def __str__(self) -> str:
+        metadata = None if not self.metadata else self.metadata.copy()
+        if metadata and "DockerBuildArgs" in metadata:
+            del metadata["DockerBuildArgs"]
+
+        copy = self._asdict()
+        if metadata:
+            copy["metadata"] = metadata
+        return f"Function({copy})"
 
 
 class ResourcesToBuildCollector:
@@ -953,6 +965,7 @@ def get_function_build_info(
     packagetype: str,
     inlinecode: Optional[str],
     codeuri: Optional[str],
+    imageuri: Optional[str],
     metadata: Optional[Dict],
 ) -> FunctionBuildInfo:
     """
@@ -974,8 +987,9 @@ def get_function_build_info(
         metadata = metadata or {}
         dockerfile = cast(str, metadata.get("Dockerfile", ""))
         docker_context = cast(str, metadata.get("DockerContext", ""))
-
-        if not dockerfile or not docker_context:
+        buildable = dockerfile and docker_context
+        loadable = imageuri and check_path_valid_type(imageuri) and Path(imageuri).is_file()
+        if not buildable and not loadable:
             LOG.debug(
                 "Skip Building %s function, as it is missing either Dockerfile or DockerContext "
                 "metadata properties.",

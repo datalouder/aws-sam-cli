@@ -20,11 +20,13 @@ RUNTIMES_WITH_BOOTSTRAP_ENTRYPOINT = [
     Runtime.nodejs16x.value,
     Runtime.nodejs18x.value,
     Runtime.nodejs20x.value,
+    Runtime.nodejs22x.value,
     Runtime.python38.value,
     Runtime.python39.value,
     Runtime.python310.value,
     Runtime.python311.value,
     Runtime.python312.value,
+    Runtime.python313.value,
     Runtime.dotnet6.value,
     Runtime.dotnet8.value,
 ]

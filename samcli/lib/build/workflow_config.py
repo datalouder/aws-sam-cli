@@ -90,13 +90,16 @@ def get_layer_subfolder(build_workflow: str) -> str:
         "python3.10": "python",
         "python3.11": "python",
         "python3.12": "python",
+        "python3.13": "python",
         "nodejs4.3": "nodejs",
         "nodejs6.10": "nodejs",
         "nodejs8.10": "nodejs",
         "nodejs16.x": "nodejs",
         "nodejs18.x": "nodejs",
         "nodejs20.x": "nodejs",
+        "nodejs22.x": "nodejs",
         "ruby3.2": "ruby/lib",
+        "ruby3.3": "ruby/lib",
         "java11": "java",
         "java8.al2": "java",
         "java17": "java",
@@ -147,6 +150,7 @@ def get_workflow_config(
     selectors_by_build_method = {
         "makefile": BasicWorkflowSelector(PROVIDED_MAKE_CONFIG),
         "dotnet7": BasicWorkflowSelector(DOTNET_CLIPACKAGE_CONFIG),
+        "dotnet": BasicWorkflowSelector(DOTNET_CLIPACKAGE_CONFIG),
         "rust-cargolambda": BasicWorkflowSelector(RUST_CARGO_LAMBDA_CONFIG),
     }
 
@@ -156,10 +160,13 @@ def get_workflow_config(
         "python3.10": BasicWorkflowSelector(PYTHON_PIP_CONFIG),
         "python3.11": BasicWorkflowSelector(PYTHON_PIP_CONFIG),
         "python3.12": BasicWorkflowSelector(PYTHON_PIP_CONFIG),
+        "python3.13": BasicWorkflowSelector(PYTHON_PIP_CONFIG),
         "nodejs16.x": BasicWorkflowSelector(NODEJS_NPM_CONFIG),
         "nodejs18.x": BasicWorkflowSelector(NODEJS_NPM_CONFIG),
         "nodejs20.x": BasicWorkflowSelector(NODEJS_NPM_CONFIG),
+        "nodejs22.x": BasicWorkflowSelector(NODEJS_NPM_CONFIG),
         "ruby3.2": BasicWorkflowSelector(RUBY_BUNDLER_CONFIG),
+        "ruby3.3": BasicWorkflowSelector(RUBY_BUNDLER_CONFIG),
         "dotnet6": BasicWorkflowSelector(DOTNET_CLIPACKAGE_CONFIG),
         "dotnet8": BasicWorkflowSelector(DOTNET_CLIPACKAGE_CONFIG),
         "go1.x": BasicWorkflowSelector(GO_MOD_CONFIG),
@@ -235,7 +242,7 @@ def get_workflow_config(
         ) from ex
 
 
-def supports_specified_workflow(specified_workflow: str) -> bool:
+def supports_specified_workflow(specified_workflow: Optional[str]) -> bool:
     """
     Given a specified workflow, returns whether it is supported in container builds,
     can be used to overwrite runtime and get docker image or not

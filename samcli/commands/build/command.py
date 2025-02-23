@@ -20,9 +20,11 @@ from samcli.commands._utils.options import (
     build_in_source_option,
     cache_dir_option,
     cached_option,
+    container_env_var_file_option,
     docker_common_options,
     hook_name_click_option,
     manifest_option,
+    mount_symlinks_option,
     parameter_override_option,
     skip_prepare_infra_option,
     template_option_without_build,
@@ -54,9 +56,9 @@ DESCRIPTION = """
   \b
   Supported Runtimes
   ------------------
-  1. Python 3.8, 3.9, 3.10, 3.11, 3.12 using PIP\n
-  2. Nodejs 20.x, 18.x, 16.x, 14.x, 12.x using NPM\n
-  3. Ruby 3.2 using Bundler\n
+  1. Python 3.8, 3.9, 3.10, 3.11, 3.12, 3.13 using PIP\n
+  2. Nodejs 22.x, Nodejs 20.x, 18.x, 16.x, 14.x, 12.x using NPM\n
+  3. Ruby 3.2, 3.3 using Bundler\n
   4. Java 8, Java 11, Java 17, Java 21 using Gradle and Maven\n
   5. Dotnet8, Dotnet6 using Dotnet CLI\n
   6. Go 1.x using Go Modules (without --use-container)\n
@@ -92,14 +94,7 @@ DESCRIPTION = """
     "\n\n Example: --container-env-var Func1.VAR1=value1 --container-env-var VAR2=value2",
     cls=ContainerOptions,
 )
-@click.option(
-    "--container-env-var-file",
-    "-ef",
-    default=None,
-    type=click.Path(),  # Must be a json file
-    help="Environment variables json file (e.g., env_vars.json) to be passed to build containers.",
-    cls=ContainerOptions,
-)
+@container_env_var_file_option(cls=ContainerOptions)
 @build_image_option(cls=ContainerOptions)
 @click.option(
     "--exclude",
@@ -121,6 +116,7 @@ DESCRIPTION = """
     "be changed/added by the build process. By default the source code directory is read only.",
     cls=ContainerOptions,
 )
+@mount_symlinks_option
 @build_dir_option
 @cache_dir_option
 @base_dir_option
@@ -164,6 +160,7 @@ def cli(
     mount_with: str,
     terraform_project_root_path: Optional[str],
     build_in_source: Optional[bool],
+    mount_symlinks: Optional[bool],
 ) -> None:
     """
     `sam build` command entry point
@@ -195,6 +192,7 @@ def cli(
         hook_name,
         build_in_source,
         mount_with,
+        mount_symlinks,
     )  # pragma: no cover
 
 
@@ -221,6 +219,7 @@ def do_cli(  # pylint: disable=too-many-locals, too-many-statements
     hook_name: Optional[str],
     build_in_source: Optional[bool],
     mount_with: str,
+    mount_symlinks: Optional[bool],
 ) -> None:
     """
     Implementation of the ``cli`` method
@@ -260,6 +259,7 @@ def do_cli(  # pylint: disable=too-many-locals, too-many-statements
         hook_name=hook_name,
         build_in_source=build_in_source,
         mount_with=mount_with,
+        mount_symlinks=mount_symlinks,
     ) as ctx:
         ctx.run()
 

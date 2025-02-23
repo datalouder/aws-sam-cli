@@ -42,6 +42,7 @@ SUPPORTED_BUILD_IN_SOURCE_WORKFLOWS = [
     Runtime.nodejs16x.value,
     Runtime.nodejs18x.value,
     Runtime.nodejs20x.value,
+    Runtime.nodejs22x.value,
     "Makefile",
     "esbuild",
 ]
@@ -737,8 +738,9 @@ def resolve_s3_click_option(guided):
         )
     )
     return click.option(
-        "--resolve-s3",
+        "--resolve-s3/--no-resolve-s3",
         required=False,
+        default=False,
         is_flag=True,
         callback=callback,
         help="Automatically resolve AWS S3 bucket for non-guided deployments. "
@@ -847,8 +849,10 @@ def resolve_image_repos_option(f):
 
 def use_container_build_click_option():
     return click.option(
-        "--use-container",
+        "--use-container/--no-use-container",
         "-u",
+        required=False,
+        default=False,
         is_flag=True,
         help="Build functions within an AWS Lambda-like container.",
     )
@@ -856,6 +860,34 @@ def use_container_build_click_option():
 
 def use_container_build_option(f):
     return use_container_build_click_option()(f)
+
+
+def mount_symlinks_click_option():
+    return click.option(
+        "--mount-symlinks/--no-mount-symlinks",
+        default=False,
+        is_flag=True,
+        help="Specify if symlinks at the top level of the code should be mounted inside the container. "
+        "Activating this flag could allow access to locations outside of your workspace by using a symbolic link. "
+        "By default symlinks are not mounted.",
+    )
+
+
+def mount_symlinks_option(f):
+    return mount_symlinks_click_option()(f)
+
+
+def no_memory_limit_click_option():
+    return click.option(
+        "--no-memory-limit",
+        default=False,
+        is_flag=True,
+        help="Remove the Memory limit during emulation. This runs the container without the --memory parameter",
+    )
+
+
+def no_memory_limit_option(f):
+    return no_memory_limit_click_option()(f)
 
 
 def terraform_plan_file_callback(ctx, param, provided_value):
@@ -1009,3 +1041,22 @@ def watch_exclude_click_option():
         type=SyncWatchExcludeType(),
         callback=watch_exclude_option_callback,
     )
+
+
+def container_env_var_file_click_option(cls):
+    """
+    Click option to --container-env-var-file option
+    """
+    return click.option(
+        "--container-env-var-file",
+        "-ef",
+        default=None,
+        type=click.Path(),  # Must be a json file
+        help="Environment variables json file (e.g., env_vars.json) to be passed to containers.",
+        cls=cls,
+    )
+
+
+@parameterized_option
+def container_env_var_file_option(f, cls):
+    return container_env_var_file_click_option(cls)(f)

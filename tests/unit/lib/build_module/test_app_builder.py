@@ -1,3 +1,4 @@
+from collections import OrderedDict
 import os
 import posixpath
 import sys
@@ -5,8 +6,10 @@ import sys
 import docker
 import json
 
+from uuid import uuid4
+
 from unittest import TestCase
-from unittest.mock import Mock, MagicMock, call, patch, ANY
+from unittest.mock import Mock, MagicMock, call, mock_open, patch, ANY
 from pathlib import Path, WindowsPath
 
 from parameterized import parameterized
@@ -29,6 +32,7 @@ from samcli.lib.utils.architecture import X86_64, ARM64
 from samcli.lib.utils.packagetype import IMAGE, ZIP
 from samcli.lib.utils.stream_writer import StreamWriter
 from samcli.local.docker.manager import DockerImagePullFailedException
+from samcli.local.docker.container import ContainerContext
 from tests.unit.lib.build_module.test_build_graph import generate_function
 
 
@@ -56,11 +60,12 @@ class TestApplicationBuilder_build(TestCase):
         self.imageFunc1.get_build_dir = Mock()
         self.imageFunc1.inlinecode = None
         self.imageFunc1.architectures = [X86_64]
+        self.imageFunc1.packagetype = IMAGE
+        self.imageFunc1.imageuri = "imageuri"
 
         self.layer1 = Mock()
         self.layer2 = Mock()
 
-        self.imageFunc1.packagetype = IMAGE
         self.layer1.build_method = "build_method"
         self.layer1.name = "layer_name1"
         self.layer1.full_path = os.path.join("StackJ", "layer_name1")
@@ -131,6 +136,7 @@ class TestApplicationBuilder_build(TestCase):
                 call(
                     self.func1.name,
                     self.func1.codeuri,
+                    ANY,
                     ZIP,
                     self.func1.runtime,
                     self.func1.architecture,
@@ -144,6 +150,7 @@ class TestApplicationBuilder_build(TestCase):
                 call(
                     self.func2.name,
                     self.func2.codeuri,
+                    ANY,
                     ZIP,
                     self.func2.runtime,
                     self.func2.architecture,
@@ -157,6 +164,7 @@ class TestApplicationBuilder_build(TestCase):
                 call(
                     self.imageFunc1.name,
                     self.imageFunc1.codeuri,
+                    self.imageFunc1.imageuri,
                     IMAGE,
                     self.imageFunc1.runtime,
                     self.imageFunc1.architecture,
@@ -203,7 +211,7 @@ class TestApplicationBuilder_build(TestCase):
     @patch("samcli.lib.build.build_graph.BuildGraph._write")
     def test_should_use_function_or_layer_get_build_dir_to_determine_artifact_dir(self, persist_mock):
         def get_func_call_with_artifact_dir(artifact_dir):
-            return call(ANY, ANY, ANY, ANY, ANY, ANY, artifact_dir, ANY, ANY, ANY, True)
+            return call(ANY, ANY, ANY, ANY, ANY, ANY, ANY, artifact_dir, ANY, ANY, ANY, True)
 
         def get_layer_call_with_artifact_dir(artifact_dir):
             return call(ANY, ANY, ANY, ANY, ANY, artifact_dir, ANY, ANY, True, ANY)
@@ -296,6 +304,7 @@ class TestApplicationBuilder_build(TestCase):
                 call(
                     function1_1.name,
                     function1_1.codeuri,
+                    ANY,
                     ZIP,
                     function1_1.runtime,
                     function1_1.architectures[0],
@@ -309,6 +318,7 @@ class TestApplicationBuilder_build(TestCase):
                 call(
                     function2.name,
                     function2.codeuri,
+                    ANY,
                     ZIP,
                     function2.runtime,
                     function1_1.architectures[0],
@@ -480,6 +490,7 @@ class TestApplicationBuilder_build(TestCase):
             self.builder._build_function(
                 function_name="function_name",
                 codeuri="code_uri",
+                imageuri=None,
                 packagetype=ZIP,
                 runtime=runtime,
                 architecture="architecture",
@@ -527,7 +538,18 @@ class TestApplicationBuilder_build(TestCase):
         builder.build()
 
         builder._build_function.assert_called_with(
-            "name", "codeuri", ZIP, "runtime", X86_64, "handler", str(Path("builddir/name")), {}, {}, None, True
+            "name",
+            "codeuri",
+            "imageuri",
+            ZIP,
+            "runtime",
+            X86_64,
+            "handler",
+            str(Path("builddir/name")),
+            {},
+            {},
+            None,
+            True,
         )
 
 
@@ -1707,19 +1729,83 @@ class TestApplicationBuilder_build_lambda_image_function(TestCase):
             ),
         )
 
+    def test_can_raise_missing_dockerfile_error(self):
+        with self.assertRaises(DockerBuildFailed) as ex:
+            self.builder._build_lambda_image("Name", {}, X86_64)
+
+        self.assertEqual(ex.exception.args, ("Docker file or Docker context metadata are missed.",))
+
     def test_can_raise_build_error(self):
         self.docker_client_mock.images.build.side_effect = docker.errors.BuildError(
-            reason="Missing Dockerfile", build_log="Build failed"
+            reason="Build failure", build_log=[{"stream": "Some earlier log"}, {"error": "Build failed"}]
         )
 
+        with self.assertRaises(DockerBuildFailed) as ex:
+            self.builder._build_lambda_image("Name", {"Dockerfile": "Dockerfile", "DockerContext": "context"}, X86_64)
+
+        self.assertEqual(ex.exception.args, ("Build failure",))
+        self.assertEqual(self.stream_mock.write_str.call_count, 4, self.stream_mock.write_str.call_args_list)
+        self.assertEqual(
+            self.stream_mock.write_str.call_args_list,
+            [call("Some earlier log"), call(""), call("Build failed"), call(os.linesep)],
+        )
+
+
+class TestApplicationBuilder_load_lambda_image_function(TestCase):
+    def setUp(self):
+        self.docker_client_mock = Mock()
+        self.builder = ApplicationBuilder(
+            Mock(),
+            "/build/dir",
+            "/base/dir",
+            "/cached/dir",
+            stream_writer=Mock(),
+            docker_client=self.docker_client_mock,
+        )
+
+    @patch("builtins.open", new_callable=mock_open)
+    def test_loads_image_archive(self, mock_open):
+        id = f"sha256:{uuid4().hex}"
+
+        self.docker_client_mock.images.load.return_value = [Mock(id=id)]
+
+        image = self.builder._load_lambda_image("./path/to/archive.tar.gz")
+        self.assertEqual(id, image)
+
+    @patch("builtins.open", new_callable=mock_open)
+    def test_archive_must_represent_a_single_image(self, mock_open):
+        self.docker_client_mock.images.load.return_value = [
+            Mock(id=f"sha256:{uuid4().hex}"),
+            Mock(id=f"sha256:{uuid4().hex}"),
+        ]
+
+        with self.assertRaises(DockerBuildFailed) as ex:
+            self.builder._load_lambda_image("./path/to/archive.tar.gz")
+        self.assertIn("single", str(ex.exception))
+
+    @patch("builtins.open", side_effect=OSError)
+    def test_image_archive_does_not_exist(self, mock_open):
         with self.assertRaises(DockerBuildFailed):
-            self.builder._build_lambda_image("Name", {}, X86_64)
+            self.builder._load_lambda_image("./path/to/nowhere.tar.gz")
+
+    @patch("builtins.open", new_callable=mock_open)
+    def test_docker_api_error(self, mock_open):
+        self.docker_client_mock.images.load.side_effect = docker.errors.APIError("failed to dial")
+
+        with self.assertRaises(DockerBuildFailed):
+            self.builder._load_lambda_image("./path/to/archive.tar.gz")
 
 
 class TestApplicationBuilder_build_function(TestCase):
     def setUp(self):
+        self.docker_client_mock = Mock()
         self.builder = ApplicationBuilder(
-            Mock(), "/build/dir", "/base/dir", "cachedir", stream_writer=StreamWriter(sys.stderr)
+            Mock(),
+            "/build/dir",
+            "/base/dir",
+            "cachedir",
+            stream_writer=StreamWriter(sys.stderr),
+            docker_client=self.docker_client_mock,
         )
 
     @patch("samcli.lib.build.app_builder.get_workflow_config")
@@ -1744,7 +1830,7 @@ class TestApplicationBuilder_build_function(TestCase):
         artifacts_dir = str(Path("/build/dir/function_full_path"))
         manifest_path = str(Path(os.path.join(code_dir, config_mock.manifest_name)).resolve())
 
-        self.builder._build_function(function_name, codeuri, ZIP, runtime, architecture, handler, artifacts_dir)
+        self.builder._build_function(function_name, codeuri, None, ZIP, runtime, architecture, handler, artifacts_dir)
 
         self.builder._build_function_in_process.assert_called_with(
             config_mock,
@@ -1807,7 +1893,9 @@ class TestApplicationBuilder_build_function(TestCase):
         get_build_options = ApplicationBuilder._get_build_options
         ApplicationBuilder._get_build_options = get_build_options_mock
         builder._build_function_in_process = build_function_in_process_mock
-        builder._build_function(function_name, codeuri, ZIP, runtime, architecture, handler, artifacts_dir, metadata)
+        builder._build_function(
+            function_name, codeuri, None, ZIP, runtime, architecture, handler, artifacts_dir, metadata
+        )
 
         ApplicationBuilder._get_build_options = get_build_options
 
@@ -1883,7 +1971,9 @@ class TestApplicationBuilder_build_function(TestCase):
         get_build_options = ApplicationBuilder._get_build_options
         ApplicationBuilder._get_build_options = get_build_options_mock
         builder._build_function_in_process = build_function_in_process_mock
-        builder._build_function(function_name, codeuri, ZIP, runtime, architecture, handler, artifacts_dir, metadata)
+        builder._build_function(
+            function_name, codeuri, None, ZIP, runtime, architecture, handler, artifacts_dir, metadata
+        )
 
         ApplicationBuilder._get_build_options = get_build_options
 
@@ -1961,7 +2051,9 @@ class TestApplicationBuilder_build_function(TestCase):
         get_build_options = ApplicationBuilder._get_build_options
         ApplicationBuilder._get_build_options = get_build_options_mock
         builder._build_function_in_process = build_function_in_process_mock
-        builder._build_function(function_name, codeuri, ZIP, runtime, architecture, handler, artifacts_dir, metadata)
+        builder._build_function(
+            function_name, codeuri, None, ZIP, runtime, architecture, handler, artifacts_dir, metadata
+        )
 
         ApplicationBuilder._get_build_options = get_build_options
 
@@ -2037,7 +2129,9 @@ class TestApplicationBuilder_build_function(TestCase):
         get_build_options = ApplicationBuilder._get_build_options
         ApplicationBuilder._get_build_options = get_build_options_mock
         builder._build_function_in_process = build_function_in_process_mock
-        builder._build_function(function_name, codeuri, ZIP, runtime, architecture, handler, artifacts_dir, metadata)
+        builder._build_function(
+            function_name, codeuri, None, ZIP, runtime, architecture, handler, artifacts_dir, metadata
+        )
 
         ApplicationBuilder._get_build_options = get_build_options
 
@@ -2112,7 +2206,9 @@ class TestApplicationBuilder_build_function(TestCase):
         get_build_options = ApplicationBuilder._get_build_options
         ApplicationBuilder._get_build_options = get_build_options_mock
         builder._build_function_in_process = build_function_in_process_mock
-        builder._build_function(function_name, codeuri, ZIP, runtime, architecture, handler, artifacts_dir, metadata)
+        builder._build_function(
+            function_name, codeuri, None, ZIP, runtime, architecture, handler, artifacts_dir, metadata
+        )
 
         ApplicationBuilder._get_build_options = get_build_options
 
@@ -2183,7 +2279,9 @@ class TestApplicationBuilder_build_function(TestCase):
         get_build_options = ApplicationBuilder._get_build_options
         ApplicationBuilder._get_build_options = get_build_options_mock
         builder._build_function_in_process = build_function_in_process_mock
-        builder._build_function(function_name, codeuri, ZIP, runtime, architecture, handler, artifacts_dir, metadata)
+        builder._build_function(
+            function_name, codeuri, None, ZIP, runtime, architecture, handler, artifacts_dir, metadata
+        )
 
         ApplicationBuilder._get_build_options = get_build_options
 
@@ -2214,6 +2312,42 @@ class TestApplicationBuilder_build_function(TestCase):
 
     @patch("samcli.lib.build.app_builder.get_workflow_config")
     @patch("samcli.lib.build.app_builder.osutils")
+    def test_must_build_in_process_with_metadata1(self, osutils_mock, get_workflow_config_mock):
+        function_name = "function_name"
+        codeuri = "path/to/source"
+        runtime = "runtime"
+        packagetype = IMAGE
+        architecture = ARM64
+        scratch_dir = "scratch"
+        handler = "handler.handle"
+        imageuri = OrderedDict()
+        config_mock = get_workflow_config_mock.return_value = Mock()
+        config_mock.manifest_name = "manifest_name"
+
+        osutils_mock.mkdir_temp.return_value.__enter__ = Mock(return_value=scratch_dir)
+        osutils_mock.mkdir_temp.return_value.__exit__ = Mock()
+
+        self.builder._build_function_in_process = Mock()
+        self.builder._build_lambda_image = Mock()
+
+        artifacts_dir = str(Path("/build/dir/function_full_path"))
+
+        self.builder._build_function(
+            function_name,
+            codeuri,
+            imageuri,
+            packagetype,
+            runtime,
+            architecture,
+            handler,
+            artifacts_dir,
+            metadata={"BuildMethod": "Workflow"},
+        )
+
+        self.builder._build_lambda_image.assert_called_once()
+
+    @patch("samcli.lib.build.app_builder.get_workflow_config")
+    @patch("samcli.lib.build.app_builder.osutils")
     def test_must_build_in_process_with_metadata(self, osutils_mock, get_workflow_config_mock):
         function_name = "function_name"
         codeuri = "path/to/source"
@@ -2237,6 +2371,7 @@ class TestApplicationBuilder_build_function(TestCase):
         self.builder._build_function(
             function_name,
             codeuri,
+            None,
             packagetype,
             runtime,
             architecture,
@@ -2294,6 +2429,7 @@ class TestApplicationBuilder_build_function(TestCase):
         self.builder._build_function(
             function_name,
             codeuri,
+            None,
             packagetype,
             runtime,
             architecture,
@@ -2344,7 +2480,9 @@ class TestApplicationBuilder_build_function(TestCase):
 
         # Settting the container manager will make us use the container
         self.builder._container_manager = Mock()
-        self.builder._build_function(function_name, codeuri, packagetype, runtime, architecture, handler, artifacts_dir)
+        self.builder._build_function(
+            function_name, codeuri, None, packagetype, runtime, architecture, handler, artifacts_dir
+        )
 
         self.builder._build_function_on_container.assert_called_with(
             config_mock,
@@ -2387,6 +2525,7 @@ class TestApplicationBuilder_build_function(TestCase):
         self.builder._build_function(
             function_name,
             codeuri,
+            None,
             packagetype,
             runtime,
             architecture,
@@ -2436,7 +2575,15 @@ class TestApplicationBuilder_build_function(TestCase):
         self.builder._container_manager = Mock()
         self.builder._build_images = build_images
         self.builder._build_function(
-            function_name, codeuri, packagetype, runtime, architecture, handler, artifacts_dir, container_env_vars=None
+            function_name,
+            codeuri,
+            None,
+            packagetype,
+            runtime,
+            architecture,
+            handler,
+            artifacts_dir,
+            container_env_vars=None,
         )
 
         self.builder._build_function_on_container.assert_called_with(
@@ -2480,7 +2627,15 @@ class TestApplicationBuilder_build_function(TestCase):
         self.builder._container_manager = Mock()
         self.builder._build_images = build_images
         self.builder._build_function(
-            function_name, codeuri, packagetype, runtime, architecture, handler, artifacts_dir, container_env_vars=None
+            function_name,
+            codeuri,
+            None,
+            packagetype,
+            runtime,
+            architecture,
+            handler,
+            artifacts_dir,
+            container_env_vars=None,
         )
 
         self.builder._build_function_on_container.assert_called_with(
@@ -2495,6 +2650,19 @@ class TestApplicationBuilder_build_function(TestCase):
             image_uri,
             specified_workflow=None,
         )
+
+    @parameterized.expand([X86_64, ARM64])
+    @patch.object(Path, "is_file", return_value=True)
+    @patch("builtins.open", new_callable=mock_open)
+    def test_loads_if_path_exists(self, mock_open, mock_is_file, architecture):
+        id = f"sha256:{uuid4().hex}"
+        function_name = "function_name"
+        imageuri = str(Path("./path/to/archive.tar.gz"))
+
+        self.docker_client_mock.images.load.return_value = [Mock(id=id)]
+
+        image = self.builder._build_function(function_name, None, imageuri, IMAGE, None, architecture, None, None)
+        self.assertEqual(id, image)
 
 
 class TestApplicationBuilder_build_function_in_process(TestCase):
@@ -2559,6 +2727,7 @@ class TestApplicationBuilder_build_function_in_process(TestCase):
             "scratch_dir",
             "manifest_path",
             runtime="runtime",
+            unpatched_runtime="runtime",
             executable_search_paths=config_mock.executable_search_paths,
             mode="mode",
             options=None,
@@ -2572,6 +2741,63 @@ class TestApplicationBuilder_build_function_in_process(TestCase):
         )
 
         patch_runtime_mock.assert_called_with("runtime")
+
+    @parameterized.expand([("provided.al2",), ("provided.al2023",)])
+    @patch("samcli.lib.telemetry.event.EventType.get_accepted_values")
+    @patch("samcli.lib.build.app_builder.LambdaBuilder")
+    @patch("samcli.lib.build.app_builder.get_enabled_experimental_flags")
+    def test_pass_unpatched_runtime_to_lambda_builder(
+        self,
+        runtime,
+        experimental_flags_mock,
+        lambda_builder_mock,
+        event_mock,
+    ):
+        experimental_flags_mock.return_value = ["experimental_flags"]
+        config_mock = Mock()
+        builder_instance_mock = lambda_builder_mock.return_value = Mock()
+        event_mock.return_value = [runtime]
+
+        result = self.builder._build_function_in_process(
+            config_mock,
+            "source_dir",
+            "artifacts_dir",
+            "scratch_dir",
+            "manifest_path",
+            runtime,
+            X86_64,
+            None,
+            None,
+            True,
+            True,
+            is_building_layer=False,
+        )
+        self.assertEqual(result, "artifacts_dir")
+
+        lambda_builder_mock.assert_called_with(
+            language=config_mock.language,
+            dependency_manager=config_mock.dependency_manager,
+            application_framework=config_mock.application_framework,
+        )
+
+        builder_instance_mock.build.assert_called_with(
+            "source_dir",
+            "artifacts_dir",
+            "scratch_dir",
+            "manifest_path",
+            runtime="provided",
+            unpatched_runtime=runtime,
+            executable_search_paths=config_mock.executable_search_paths,
+            mode="mode",
+            options=None,
+            architecture=X86_64,
+            dependencies_dir=None,
+            download_dependencies=True,
+            combine_dependencies=True,
+            is_building_layer=False,
+            experimental_flags=["experimental_flags"],
+            build_in_source=False,
+        )
 
     @patch("samcli.lib.build.app_builder.LambdaBuilder")
     def test_must_raise_on_error(self, lambda_builder_mock):
@@ -2626,6 +2852,7 @@ class TestApplicationBuilder_build_function_in_process(TestCase):
                     "scratch_dir",
                     "manifest_path",
                     runtime="runtime",
+                    unpatched_runtime="runtime",
                     executable_search_paths=ANY,
                     mode="mode",
                     options=None,
@@ -2712,9 +2939,10 @@ class TestApplicationBuilder_build_function_on_container(TestCase):
             build_in_source=False,
             mount_with_write=False,
             build_dir="/build/dir",
+            mount_symlinks=False,
         )
 
-        self.container_manager.run.assert_called_with(container_mock)
+        self.container_manager.run.assert_called_with(container_mock, context=ContainerContext.BUILD)
         self.builder._parse_builder_response.assert_called_once_with(stdout_data, container_mock.image)
         container_mock.copy.assert_called_with(response["result"]["artifacts_dir"] + "/.", "artifacts_dir")
         self.container_manager.stop.assert_called_with(container_mock)

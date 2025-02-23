@@ -20,6 +20,7 @@ from samcli.lib.providers.sam_function_provider import RefreshableSamFunctionPro
 from samcli.lib.providers.sam_stack_provider import SamLocalStackProvider
 from samcli.lib.utils import osutils
 from samcli.lib.utils.async_utils import AsyncContext
+from samcli.lib.utils.boto_utils import get_boto_client_provider_with_config
 from samcli.lib.utils.packagetype import ZIP
 from samcli.lib.utils.stream_writer import StreamWriter
 from samcli.local.docker.exceptions import PortAlreadyInUse
@@ -100,6 +101,8 @@ class InvokeContext:
         container_host_interface: Optional[str] = None,
         add_host: Optional[dict] = None,
         invoke_images: Optional[str] = None,
+        mount_symlinks: Optional[bool] = False,
+        no_mem_limit: Optional[bool] = False,
     ) -> None:
         """
         Initialize the context
@@ -154,7 +157,10 @@ class InvokeContext:
             Optional. Docker extra hosts support from --add-host parameters
         invoke_images dict
             Optional. A dictionary that defines the custom invoke image URI of each function
+        mount_symlinks bool
+            Optional. Indicates if symlinks should be mounted inside the container
         """
+
         self._template_file = template_file
         self._function_identifier = function_identifier
         self._env_vars_file = env_vars_file
@@ -178,6 +184,7 @@ class InvokeContext:
         self._aws_region = aws_region
         self._aws_profile = aws_profile
         self._shutdown = shutdown
+        self._add_account_id_to_global()
 
         self._container_host = container_host
         self._container_host_interface = container_host_interface
@@ -194,6 +201,9 @@ class InvokeContext:
             self._containers_initializing_mode = ContainersInitializationMode(warm_container_initialization_mode)
 
         self._debug_function = debug_function
+
+        self._mount_symlinks: Optional[bool] = mount_symlinks
+        self._no_mem_limit = no_mem_limit
 
         # Note(xinhol): despite self._function_provider and self._stacks are initialized as None
         # they will be assigned with a non-None value in __enter__() and
@@ -311,7 +321,12 @@ class InvokeContext:
         def initialize_function_container(function: Function) -> None:
             function_config = self.local_lambda_runner.get_invoke_config(function)
             self.lambda_runtime.run(
-                None, function_config, self._debug_context, self._container_host, self._container_host_interface
+                container=None,
+                function_config=function_config,
+                debug_context=self._debug_context,
+                container_host=self._container_host,
+                container_host_interface=self._container_host_interface,
+                extra_hosts=self._extra_hosts,
             )
 
         try:
@@ -339,6 +354,25 @@ class InvokeContext:
         """
         cast(WarmLambdaRuntime, self.lambda_runtime).clean_running_containers_and_related_resources()
         cast(RefreshableSamFunctionProvider, self._function_provider).stop_observer()
+
+    def _add_account_id_to_global(self) -> None:
+        """
+        Attempts to get the Account ID from the current session
+        If there is no current session, the standard parameter override for
+        AWS::AccountId is used
+        """
+        client_provider = get_boto_client_provider_with_config(region=self._aws_region, profile=self._aws_profile)
+
+        sts = client_provider("sts")
+
+        try:
+            account_id = sts.get_caller_identity().get("Account")
+            if account_id:
+                if self._global_parameter_overrides is None:
+                    self._global_parameter_overrides = {}
+                self._global_parameter_overrides["AWS::AccountId"] = account_id
+        except Exception:
+            LOG.warning("No current session found, using default AWS::AccountId")
 
     @property
     def function_identifier(self) -> str:
@@ -376,10 +410,19 @@ class InvokeContext:
                 layer_downloader, self._skip_pull_image, self._force_image_build, invoke_images=self._invoke_images
             )
             self._lambda_runtimes = {
-                ContainersMode.WARM: WarmLambdaRuntime(self._container_manager, image_builder),
-                ContainersMode.COLD: LambdaRuntime(self._container_manager, image_builder),
+                ContainersMode.WARM: WarmLambdaRuntime(
+                    self._container_manager,
+                    image_builder,
+                    mount_symlinks=self._mount_symlinks,
+                    no_mem_limit=self._no_mem_limit,
+                ),
+                ContainersMode.COLD: LambdaRuntime(
+                    self._container_manager,
+                    image_builder,
+                    mount_symlinks=self._mount_symlinks,
+                    no_mem_limit=self._no_mem_limit,
+                ),
             }
-
         return self._lambda_runtimes[self._containers_mode]
 
     @property

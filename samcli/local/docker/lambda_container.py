@@ -56,6 +56,7 @@ class LambdaContainer(Container):
         container_host_interface=DEFAULT_CONTAINER_HOST_INTERFACE,
         extra_hosts=None,
         function_full_path=None,
+        mount_symlinks=False,
     ):
         """
         Initializes the class
@@ -65,7 +66,8 @@ class LambdaContainer(Container):
         runtime str
             Name of the Lambda runtime
         imageuri str
-            Name of the Lambda Image which is of the form {image}:{tag}
+            Location of the Lambda Image which is of the form {image}:{tag}, sha256:{digest},
+            or a path to a local archive
         handler str
             Handler of the function to run
         packagetype str
@@ -95,6 +97,8 @@ class LambdaContainer(Container):
             Optional. Dict of hostname to IP resolutions
         function_full_path str
             Optional. The function full path, unique in all stacks
+        mount_symlinks bool
+            Optional. True is symlinks should be mounted in the container
         """
         if not Runtime.has_value(runtime) and not packagetype == IMAGE:
             raise InvalidRuntimeException(INVALID_RUNTIME_MESSAGE.format(runtime=runtime))
@@ -145,6 +149,7 @@ class LambdaContainer(Container):
             container_host=container_host,
             container_host_interface=container_host_interface,
             extra_hosts=extra_hosts,
+            mount_symlinks=mount_symlinks,
         )
 
     @staticmethod
@@ -153,7 +158,6 @@ class LambdaContainer(Container):
         Returns default entry point for lambda container, which is the path of the RIE executable with its debugging
         configuration. If SAM_CLI_RIE_DEV is set to 1, RIE log level is set to 'debug', otherwise it is kept as 'error'.
         """
-        #
         rie_log_level = "debug" if os.environ.get(RIE_LOG_LEVEL_ENV_VAR, "0") == "1" else "error"
         return ["/var/rapid/aws-lambda-rie", "--log-level", rie_log_level]
 
@@ -240,7 +244,8 @@ class LambdaContainer(Container):
         packagetype : str
             Package type for the lambda function which is either zip or image.
         image : str
-            Name of the Lambda Image which is of the form {image}:{tag}
+            Location of the Lambda Image which is of the form {image}:{tag}, sha256:{digest},
+            or a path to a local archive
         layers : List[str]
             List of layers
         architecture : str

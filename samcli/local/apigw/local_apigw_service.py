@@ -15,6 +15,7 @@ from werkzeug.serving import WSGIRequestHandler
 
 from samcli.commands.local.lib.exceptions import UnsupportedInlineCodeError
 from samcli.commands.local.lib.local_lambda import LocalLambdaRunner
+from samcli.lib.providers.exceptions import MissingFunctionNameException
 from samcli.lib.providers.provider import Api, Cors
 from samcli.lib.telemetry.event import EventName, EventTracker, UsedFeature
 from samcli.lib.utils.stream_writer import StreamWriter
@@ -30,6 +31,7 @@ from samcli.local.apigw.exceptions import (
 from samcli.local.apigw.path_converter import PathConverter
 from samcli.local.apigw.route import Route
 from samcli.local.apigw.service_error_responses import ServiceErrorResponses
+from samcli.local.docker.exceptions import DockerContainerCreationFailedException
 from samcli.local.events.api_event import (
     ContextHTTP,
     ContextIdentity,
@@ -716,6 +718,11 @@ class LocalApigwService(BaseLocalService):
                 LOG.error("Lambda authorizer failed to invoke successfully: %s", str(lambda_authorizer_exception))
 
             if auth_service_error:
+                # Return the Flask service error if there is one, since these are the only exceptions
+                # we are anticipating from the authorizer, anything else indicates a local issue.
+                #
+                # Note that returning within a finally block will have the effect of swallowing
+                # any reraised exceptions.
                 return auth_service_error
 
         endpoint_service_error = None
@@ -730,6 +737,12 @@ class LocalApigwService(BaseLocalService):
             )
         except LambdaResponseParseException:
             endpoint_service_error = ServiceErrorResponses.lambda_body_failure_response()
+        except DockerContainerCreationFailedException as ex:
+            endpoint_service_error = ServiceErrorResponses.container_creation_failed(ex.message)
+        except MissingFunctionNameException as ex:
+            endpoint_service_error = ServiceErrorResponses.lambda_failure_response(
+                f"Failed to execute endpoint. Got an invalid function name ({str(ex)})",
+            )
 
         if endpoint_service_error:
             return endpoint_service_error
